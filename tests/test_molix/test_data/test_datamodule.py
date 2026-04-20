@@ -8,7 +8,7 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
-from molix.data.cache import save
+from molix.data.cache import PackedCache
 from molix.data.collate import DEFAULT_TARGET_SCHEMA
 from molix.data.datamodule import DataModule
 from molix.data.dataset import CachedDataset
@@ -38,8 +38,8 @@ def _write_and_load_split(tmp_path: Path, train_n: int, val_n: int,
     samples = _make_samples(train_n + val_n)
     train_sink = tmp_path / "train.pt"
     val_sink = tmp_path / "val.pt"
-    save(train_sink, samples[:train_n])
-    save(val_sink, samples[train_n:])
+    PackedCache(train_sink).save(samples[:train_n])
+    PackedCache(val_sink).save(samples[train_n:])
     return dataset_cls(train_sink), dataset_cls(val_sink)
 
 
@@ -149,8 +149,8 @@ class TestCollation:
 
         samples = _make_samples(6)
         tsink, vsink = tmp_path / "t.pt", tmp_path / "v.pt"
-        save(tsink, samples[:4])
-        save(vsink, samples[4:])
+        PackedCache(tsink).save(samples[:4])
+        PackedCache(vsink).save(samples[4:])
         dm = DataModule(SchemaCarrier(tsink), SchemaCarrier(vsink),
                         batch_size=2, pin_memory=False)
         assert dm.target_schema.graph_level == frozenset({"U0"})
@@ -163,8 +163,8 @@ class TestCollation:
 
         samples = _make_samples(6)
         tsink, vsink = tmp_path / "t.pt", tmp_path / "v.pt"
-        save(tsink, samples[:4])
-        save(vsink, samples[4:])
+        PackedCache(tsink).save(samples[:4])
+        PackedCache(vsink).save(samples[4:])
         explicit = TargetSchema(graph_level={"U0"}, atom_level=frozenset())
         dm = DataModule(SchemaCarrier(tsink), SchemaCarrier(vsink),
                         target_schema=explicit, batch_size=2, pin_memory=False)

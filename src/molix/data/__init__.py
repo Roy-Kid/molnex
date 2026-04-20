@@ -4,18 +4,15 @@ Layering:
     task     — Task / SampleTask / DatasetTask / BatchTask (transform primitives).
     source   — DataSource protocol + in-memory and subset sources.
     pipeline — declarative container: what tasks to run, in what order, with
-               what identity.
-    execute  — run(), transform(), collect_task_states(): executes a pipeline.
-    cache    — cache(), cache_key(), is_ready(), save(), load(): short-lived
-               scratch cache of pipeline output.
-    ddp      — rank(), wait_for_ready(): opt-in distributed coordination.
-    dataset  — MmapDataset, CachedDataset, SubsetDataset: readers over cache
-               files.
+               what identity; plus ``.run`` / ``.cache`` / ``.cache_key``
+               methods for execution and DDP-aware materialisation.
+    cache    — :class:`PackedCache`: short-lived, atomically-written scratch
+               file that stores the output of ``PipelineSpec.cache``.
+    dataset  — MmapDataset, CachedDataset, SubsetDataset: readers over
+               :class:`PackedCache` files.
 
-``execute`` / ``cache`` / ``ddp`` are *sub-module imports* — they belong to
-the workflow layer and are kept off the top-level export surface to keep
-``from molix.data import *`` focused on the pieces every training script
-needs.
+There is no free-function cache / execute / ddp surface — all orchestration
+lives on :class:`PipelineSpec` (and on :class:`PackedCache` for file IO).
 """
 
 # Task hierarchy
@@ -35,6 +32,9 @@ from molix.data.source import DataSource, InMemorySource, SubsetSource
 
 # Pipeline DSL
 from molix.data.pipeline import Pipeline, PipelineSpec, TaskEntry
+
+# Cache
+from molix.data.cache import PackedCache
 
 # Dataset classes
 from molix.data.dataset import (
@@ -82,6 +82,8 @@ __all__ = [
     "Pipeline",
     "PipelineSpec",
     "TaskEntry",
+    # Cache
+    "PackedCache",
     # Dataset classes
     "BaseDataset",
     "CachedDataset",

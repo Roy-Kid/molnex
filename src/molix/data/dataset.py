@@ -1,4 +1,4 @@
-"""Dataset readers over :mod:`molix.data.cache` files.
+"""Dataset readers over :class:`~molix.data.cache.PackedCache` files.
 
 Two concrete implementations, differing only in how the underlying
 ``torch.save`` file is loaded:
@@ -31,8 +31,7 @@ from typing import Any
 import torch
 from torch.utils.data import Dataset
 
-from molix.data.cache import load as _load_cache
-from molix.data.cache import unpack_one as _unpack_one
+from molix.data.cache import PackedCache
 
 
 __all__ = ["BaseDataset", "MmapDataset", "CachedDataset", "SubsetDataset"]
@@ -97,9 +96,9 @@ class _CacheBacked(BaseDataset):
     per-item cost is O(n_keys) and uses views (no storage copy when ``mmap=True``).
     """
 
-    def __init__(self, sink: str | Path, *, mmap: bool) -> None:
-        self._sink = Path(sink)
-        payload = _load_cache(self._sink, mmap=mmap)
+    def __init__(self, sink: str | Path | PackedCache, *, mmap: bool) -> None:
+        self._cache = sink if isinstance(sink, PackedCache) else PackedCache(sink)
+        payload = self._cache.load(mmap=mmap)
         self._payload: dict[str, Any] = payload
         self._n_samples: int = int(payload["n_samples"])
         self._task_states: dict[str, Any] = payload.get("task_states", {}) or {}
@@ -108,12 +107,12 @@ class _CacheBacked(BaseDataset):
         return self._n_samples
 
     def __getitem__(self, idx: int) -> dict:  # type: ignore[override]
-        return _unpack_one(self._payload, idx)
+        return PackedCache.unpack_sample(self._payload, idx)
 
     @property
     def sink(self) -> Path:
         """Path to the cache file backing this dataset."""
-        return self._sink
+        return self._cache.sink
 
     @property
     def task_states(self) -> Mapping[str, Any]:
@@ -133,11 +132,12 @@ class MmapDataset(_CacheBacked):
     tensor data after the initial load.
 
     Args:
-        sink: Cache file path written by :func:`molix.data.cache.cache`
-            or :func:`molix.data.cache.save`.
+        sink: Cache path, or an existing
+            :class:`~molix.data.cache.PackedCache`, normally produced by
+            :meth:`PipelineSpec.cache <molix.data.pipeline.PipelineSpec.cache>`.
     """
 
-    def __init__(self, sink: str | Path) -> None:
+    def __init__(self, sink: str | Path | PackedCache) -> None:
         super().__init__(sink, mmap=True)
 
 
@@ -148,11 +148,12 @@ class CachedDataset(_CacheBacked):
     :class:`MmapDataset`.
 
     Args:
-        sink: Cache file path written by :func:`molix.data.cache.cache`
-            or :func:`molix.data.cache.save`.
+        sink: Cache path, or an existing
+            :class:`~molix.data.cache.PackedCache`, normally produced by
+            :meth:`PipelineSpec.cache <molix.data.pipeline.PipelineSpec.cache>`.
     """
 
-    def __init__(self, sink: str | Path) -> None:
+    def __init__(self, sink: str | Path | PackedCache) -> None:
         super().__init__(sink, mmap=False)
 
 

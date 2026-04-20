@@ -13,13 +13,12 @@ benchmark used in the Allegro paper (Musaelian et al. 2023).
 Usage::
 
     from molix.data import Pipeline, NeighborList, MmapDataset
-    from molix.data.cache import cache
     from molix.datasets import RevMD17Source
 
     source = RevMD17Source(data_dir, molecule="aspirin")
     pipe = Pipeline("revmd17-aspirin").add(NeighborList(cutoff=7.0)).build()
-    cache(pipe, source, sink=sink_path)
-    ds = MmapDataset(sink_path)
+    packed = pipe.cache(source, base_dir=run_dir / "cache")
+    ds = MmapDataset(packed.sink)
     # RevMD17Source.TARGET_SCHEMA exposes graph {"energy"} + atom {"forces"}.
 """
 

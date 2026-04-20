@@ -278,12 +278,12 @@ class DataLoaderProfiler:
         """
         import tempfile
 
-        from molix.data.cache import save
+        from molix.data.cache import PackedCache
 
         n = len(source)  # type: ignore[arg-type]
         samples = [source[i] for i in range(n)]  # type: ignore[index]
         tmp_file = Path(tempfile.mkdtemp(prefix="molix_profiler_")) / "samples.pt"
-        save(tmp_file, samples)
+        PackedCache(tmp_file).save(samples)
         return CachedDataset(tmp_file)
 
     def _make_dataloader(self, dataset: Dataset) -> DataLoader:
@@ -291,11 +291,10 @@ class DataLoaderProfiler:
         pipeline = self.pipeline
 
         def collate_fn(batch_samples: list[dict]) -> object:
-            from molix.data.execute import call_task as _ct
             batch = collate_molecules(batch_samples, schema)
             if pipeline is not None:
                 for entry in pipeline.batch_tasks:
-                    batch = _ct(entry.task, batch)
+                    batch = entry.apply(batch)
             return batch
 
         return DataLoader(

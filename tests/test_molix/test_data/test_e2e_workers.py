@@ -9,14 +9,14 @@ real training runs:
 * MmapDataset must round-trip through pickle intact
 
 Test flow mirrors the data path of train_allegro_qm9.py:
-pipeline → cache() → MmapDataset → Subset → DataModule(num_workers>0) → iterate.
+pipeline → PipelineSpec.build_cache() → MmapDataset → Subset →
+DataModule(num_workers>0) → iterate.
 """
 
 from __future__ import annotations
 
 import torch
 
-from molix.data.cache import cache
 from molix.data.collate import TargetSchema
 from molix.data.datamodule import DataModule
 from molix.data.dataset import MmapDataset
@@ -70,7 +70,7 @@ def test_mmap_dataset_with_num_workers_4(tmp_path):
     src = InMemorySource(_raw_samples(16))
     spec = Pipeline("e2e").add(FakeNeighborList()).build()
     sink = tmp_path / "prepared.pt"
-    cache(spec, src, sink=sink)
+    spec.build_cache(src, sink)
 
     full = MmapDataset(sink)
     train, val = full.split(ratio=0.75, seed=0)
@@ -103,7 +103,7 @@ def test_collate_picklable_with_batch_tasks(tmp_path):
     src = InMemorySource(_raw_samples(8))
     spec = Pipeline("p").add(FakeNeighborList()).build()
     sink = tmp_path / "prepared.pt"
-    cache(spec, src, sink=sink)
+    spec.build_cache(src, sink)
 
     ds = MmapDataset(sink)
     train, val = ds.split(ratio=0.5)

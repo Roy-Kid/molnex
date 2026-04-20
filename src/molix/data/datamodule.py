@@ -10,7 +10,6 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 from molix.data.collate import DEFAULT_TARGET_SCHEMA, TargetSchema, collate_molecules
 from molix.data.dataset import BaseDataset
-from molix.data.execute import call_task
 from molix.data.pipeline import TaskEntry
 
 
@@ -60,9 +59,9 @@ class DataModule:
 
     Usage::
 
-        from molix.data.cache import cache
-        cache(pipe, source, sink=cache_path, fit_source=train_source)
-        ds = MmapDataset(cache_path)
+        packed = pipe.cache(source, base_dir=run_dir / "cache",
+                            fit_source=train_source)
+        ds = MmapDataset(packed.sink)
         train_ds, val_ds = ds.split(ratio=0.8)
         dm = DataModule(train_ds, val_ds,
                         target_schema=QM9Source.TARGET_SCHEMA,
@@ -244,5 +243,5 @@ class _CollateFn:
     def __call__(self, samples: list[dict]) -> dict:
         batch = collate_molecules(samples, self.schema)
         for entry in self.batch_tasks:
-            batch = call_task(entry.task, batch)
+            batch = entry.apply(batch)
         return batch

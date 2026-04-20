@@ -1,9 +1,11 @@
 """Short-lived pipeline output cache.
 
-**Scope**: one training run. The cache exists so that expensive preprocessing
-(neighbor lists, atomic dress, etc.) is computed *once* at the start of a run
-and reused for every training step thereafter. It is explicitly **not** a
-persistence format:
+**Scope**: one training run. A :class:`PackedCache` holds a single on-disk
+file that stores the output of a :class:`~molix.data.pipeline.PipelineSpec`
+applied to a :class:`~molix.data.source.DataSource`. It exists so that
+expensive preprocessing (neighbor lists, atomic dress, etc.) is computed
+*once* at the start of a run and reused for every training step thereafter.
+It is explicitly **not** a persistence format:
 
 * no schema version, no ``meta.json``, no ``_READY`` sentinel;
 * no validation beyond "file exists and opens";
@@ -14,57 +16,33 @@ persistence format:
 If long-term persistence matters, use :mod:`molix.datasets` (curated
 datasets) instead.
 
-Single-file layout — one ``<sink>.pt`` per cache, written via ``torch.save``
-and read via ``torch.load(mmap=True)``. A failed write never leaves a partial
-file behind (atomic ``os.rename``). Callers own placement, naming, and
-invalidation policy.
+Single-file layout — one ``<sink>.pt`` per cache, written via
+``torch.save`` and read via ``torch.load(mmap=True)``. A failed write never
+leaves a partial file behind (atomic ``os.rename``).
 
-Typical workflow::
-
-    from molix.data.cache import cache, cache_key, is_ready
-    from molix.data.ddp import rank, wait_for_ready
-
-    key = cache_key(
-        pipeline_id=pipe.pipeline_id,
-        source_id=source.source_id,
-        fit_source_id=train.source_id,
-        extra={"n_train": str(n_train), "seed": str(seed)},
-    )
-    sink = run_dir / "cache" / f"{pipe.name}-{key}.pt"
-    sink.parent.mkdir(parents=True, exist_ok=True)
-
-    if rank() == 0 and not is_ready(sink):
-        cache(pipe, source, sink=sink, fit_source=train)
-    else:
-        wait_for_ready(sink)
+Rank / DDP coordination is owned by
+:meth:`molix.data.pipeline.PipelineSpec.cache` — user code never touches the
+rank env var directly.
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
+import time
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any, ClassVar
+
 
 import torch
 
-from molix.data.execute import collect_task_states, run
 
-if TYPE_CHECKING:
-    from molix.data.pipeline import PipelineSpec
-    from molix.data.source import DataSource
-
-
-__all__ = ["cache_key", "is_ready", "save", "load", "cache"]
+__all__ = ["PackedCache"]
 
 
 _KEY_HEX_LEN = 12
-
-# Packed cache format version. Bump on incompatible layout changes so loaders
-# can reject stale sinks instead of silently misreading.
-_PACKED_FORMAT_VERSION = 2
 
 # Reserved keys in the packed payload — never collide with user sample keys.
 _RESERVED_TOP_KEYS = frozenset({
@@ -73,150 +51,220 @@ _RESERVED_TOP_KEYS = frozenset({
 })
 
 
-def cache_key(
-    *,
-    pipeline_id: str,
-    source_id: str,
-    fit_source_id: str | None = None,
-    extra: Mapping[str, str] | None = None,
-) -> str:
-    """Return a 12-hex SHA256 for the ``(pipeline, source, fit_source, extra)`` tuple.
+class PackedCache:
+    """One on-disk cache file in packed layout.
 
-    The *workflow* composes these strings however it wants — in particular,
-    ``extra`` is a free-form dict for pinning split sizes, seeds, dtype, etc.
-    Changing any string invalidates the cache.
-    """
-    fs_id = fit_source_id if fit_source_id is not None else source_id
-    parts = [
-        f"pipeline_id={pipeline_id}",
-        f"source_id={source_id}",
-        f"fit_source_id={fs_id}",
-    ]
-    if extra:
-        for k in sorted(extra):
-            parts.append(f"{k}={extra[k]}")
-    digest = hashlib.sha256("|".join(parts).encode()).hexdigest()
-    return digest[:_KEY_HEX_LEN]
+    A :class:`PackedCache` is a thin OOP facade over a single ``.pt`` file:
+    it owns readiness checks, atomic save, mmap-backed load, DDP-friendly
+    polling, and per-sample unpacking. The cache is identified by its
+    *sink* path alone — identity hashing (pipeline + source fingerprint) is
+    handled by :meth:`PackedCache.make_key` and normally accessed through
+    :meth:`molix.data.pipeline.PipelineSpec.cache_key`.
 
-
-def is_ready(sink: str | Path) -> bool:
-    """Return ``True`` if *sink* is a readable cache file.
-
-    Readable = exists, is a regular file, and has non-zero size. Actual
-    unpickle safety is deferred to load time — a torture of half-written
-    files would fail there, which is fine: the workflow would treat it as
-    not-ready and rebuild.
-    """
-    p = Path(sink)
-    try:
-        return p.is_file() and p.stat().st_size > 0
-    except OSError:
-        return False
-
-
-def save(
-    sink: str | Path,
-    samples: list[dict],
-    *,
-    task_states: Mapping[str, Mapping[str, Any]] | None = None,
-    overwrite: bool = False,
-) -> None:
-    """Serialize *samples* (+ optional *task_states*) atomically to *sink*.
-
-    The on-disk layout is a **packed** representation: each sample key is
+    On-disk layout is a **packed** representation: each sample key is
     concatenated across all samples into a single large tensor (per-atom,
     per-edge, or per-graph depending on its shape), with ``atom_ptr`` /
     ``edge_ptr`` cumsum indices locating each sample's slice. That keeps
-    the per-sample-object overhead off the critical path on load (one call
-    to ``torch.load`` deserialises O(schema_keys) tensors instead of
+    the per-sample-object overhead off the critical path on load (one
+    :func:`torch.load` deserialises O(schema_keys) tensors instead of
     O(n_samples × n_keys)).
-
-    Uses ``torch.save``; readable later with ``torch.load(mmap=True)``.
-    Writes ``<sink>.partial.<uuid>``, fsyncs, then ``os.rename`` onto *sink*
-    — single-file rename is POSIX-atomic, so observers never see a partial
-    file.
-
-    Args:
-        sink: Target file path (``.pt`` extension recommended).
-        samples: Processed sample dicts. Leaves must be ``torch.Tensor`` or
-            JSON-safe scalars (``int``/``float``/``str``/``bool``) so that
-            downstream :func:`load` can use ``weights_only=True``. Every
-            sample must share the same schema (same keys, same per-atom /
-            per-edge / per-graph classification per key); the first sample
-            is taken as the reference schema.
-        task_states: Optional fitted state for :class:`DatasetTask`
-            instances, typically produced by
-            :func:`~molix.data.execute.collect_task_states`.
-        overwrite: If *sink* already exists, replace it. Otherwise keep the
-            existing file (no-op).
     """
-    sink = Path(sink)
-    if sink.exists() and not overwrite:
-        return
 
-    sink.parent.mkdir(parents=True, exist_ok=True)
-    tmp = sink.parent / f"{sink.name}.partial.{uuid.uuid4().hex[:8]}"
+    # Packed cache format version. Bump on incompatible layout changes so
+    # loaders can reject stale sinks instead of silently misreading.
+    FORMAT_VERSION: ClassVar[int] = 2
 
-    payload = _pack_samples(list(samples))
-    if task_states:
-        payload["task_states"] = {k: dict(v) for k, v in task_states.items()}
+    __slots__ = ("_sink",)
 
-    try:
-        torch.save(payload, tmp)
-        _fsync_file(tmp)
-        os.replace(tmp, sink)        # atomic on POSIX (incl. same-mount NFS)
-    except BaseException:
+    def __init__(self, sink: str | Path) -> None:
+        self._sink = Path(sink)
+
+    # -- identity ----------------------------------------------------------
+
+    @property
+    def sink(self) -> Path:
+        """The file path backing this cache."""
+        return self._sink
+
+    def __fspath__(self) -> str:
+        return os.fspath(self._sink)
+
+    def __repr__(self) -> str:
+        return f"PackedCache(sink={self._sink!s})"
+
+    @classmethod
+    def make_key(
+        cls,
+        *,
+        pipeline_id: str,
+        source_id: str,
+        fit_source_id: str | None = None,
+        extra: Mapping[str, str] | None = None,
+    ) -> str:
+        """Return a 12-hex SHA256 for the ``(pipeline, source, fit_source, extra)`` tuple.
+
+        Normally accessed through :meth:`PipelineSpec.cache_key` rather
+        than called directly. ``extra`` is a free-form dict for pinning
+        split sizes, seeds, dtype, etc. — changing any string invalidates
+        the cache.
+        """
+        fs_id = fit_source_id if fit_source_id is not None else source_id
+        parts = [
+            f"pipeline_id={pipeline_id}",
+            f"source_id={source_id}",
+            f"fit_source_id={fs_id}",
+        ]
+        if extra:
+            for k in sorted(extra):
+                parts.append(f"{k}={extra[k]}")
+        digest = hashlib.sha256("|".join(parts).encode()).hexdigest()
+        return digest[:_KEY_HEX_LEN]
+
+    # -- readiness & DDP polling ------------------------------------------
+
+    def is_ready(self) -> bool:
+        """Return ``True`` if the sink is a readable cache file.
+
+        Readable = exists, is a regular file, and has non-zero size.
+        Unpickle safety is deferred to :meth:`load` — a half-written file
+        would fail there, which is fine: the workflow would treat it as
+        not-ready and rebuild.
+        """
         try:
-            tmp.unlink(missing_ok=True)
+            return self._sink.is_file() and self._sink.stat().st_size > 0
         except OSError:
-            pass
-        raise
+            return False
 
+    def wait_until_ready(
+        self,
+        *,
+        timeout: float = 600.0,
+        poll_interval: float = 0.5,
+    ) -> None:
+        """Block until :meth:`is_ready` returns ``True``, or raise.
 
-def load(sink: str | Path, *, mmap: bool = True) -> dict[str, Any]:
-    """Load a cache file (packed format).
+        Used by non-primary DDP ranks while rank 0 materialises the cache.
 
-    Args:
-        sink: Path previously written by :func:`save`.
-        mmap: Memory-map the tensor storages (default). Set to ``False`` if
-            you want a full in-memory copy.
-
-    Returns:
-        A packed payload dict (see :func:`_pack_samples`) — specifically::
-
-            {
-                "format_version": int,
-                "n_samples": int,
-                "schema": {key: spec, ...},
-                "atom_ptr": LongTensor(n_samples+1),   # absent if no per-atom keys
-                "edge_ptr": LongTensor(n_samples+1),   # absent if no per-edge keys
-                "atoms":   {key: concat tensor, ...},
-                "edges":   {key: concat tensor, ...},
-                "graphs":  {key: stacked tensor, ...},
-                "scalars": {key: [v0, v1, ...], ...},  # non-tensor values
-                "task_states": {...},                  # optional
-            }
-
-        Also exposes ``payload["samples"]`` as a lazy list-like view (each
-        access reconstructs a sample dict on the fly). Mostly for tests and
-        compatibility — hot paths should use :func:`unpack_one` directly to
-        skip constructing an intermediate list.
-    """
-    payload = torch.load(sink, mmap=mmap, weights_only=True)
-
-    version = payload.get("format_version")
-    if version != _PACKED_FORMAT_VERSION:
-        raise ValueError(
-            f"Cache file {sink} has format_version={version!r}, expected "
-            f"{_PACKED_FORMAT_VERSION}. The packed cache format changed — "
-            "delete the stale cache and rerun the pipeline."
+        Args:
+            timeout: Maximum seconds to wait before raising
+                :class:`TimeoutError`.
+            poll_interval: Seconds between readiness probes.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.is_ready():
+                return
+            time.sleep(poll_interval)
+        raise TimeoutError(
+            f"Timed out waiting {timeout:.0f}s for cache at {self._sink}. "
+            "PipelineSpec.cache() must be driven from rank 0 (e.g. a "
+            "prepare_data stage) before workers start."
         )
-    payload["samples"] = _LazySampleView(payload)
-    return payload
+
+    # -- IO ----------------------------------------------------------------
+
+    def save(
+        self,
+        samples: list[dict],
+        *,
+        task_states: Mapping[str, Mapping[str, Any]] | None = None,
+        overwrite: bool = False,
+    ) -> None:
+        """Serialize *samples* (+ optional *task_states*) atomically.
+
+        Writes ``<sink>.partial.<uuid>``, fsyncs, then ``os.rename`` onto
+        the sink — single-file rename is POSIX-atomic, so observers never
+        see a partial file.
+
+        Args:
+            samples: Processed sample dicts. Leaves must be
+                ``torch.Tensor`` or JSON-safe scalars
+                (``int``/``float``/``str``/``bool``) so that downstream
+                :meth:`load` can use ``weights_only=True``. Every sample
+                must share the same schema (same keys, same per-atom /
+                per-edge / per-graph classification per key); the first
+                sample is taken as the reference schema.
+            task_states: Optional fitted state for
+                :class:`~molix.data.task.DatasetTask` instances, typically
+                produced by
+                :meth:`~molix.data.pipeline.PipelineSpec.collect_task_states`.
+            overwrite: If the sink already exists, replace it. Otherwise
+                keep the existing file (no-op).
+        """
+        if self._sink.exists() and not overwrite:
+            return
+
+        self._sink.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._sink.parent / f"{self._sink.name}.partial.{uuid.uuid4().hex[:8]}"
+
+        payload = _pack_samples(list(samples))
+        if task_states:
+            payload["task_states"] = {k: dict(v) for k, v in task_states.items()}
+
+        try:
+            torch.save(payload, tmp)
+            _fsync_file(tmp)
+            os.replace(tmp, self._sink)      # atomic on POSIX (incl. same-mount NFS)
+        except BaseException:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+
+    def load(self, *, mmap: bool = True) -> dict[str, Any]:
+        """Load this cache (packed format).
+
+        Args:
+            mmap: Memory-map the tensor storages (default). Set to
+                ``False`` for a full in-memory copy.
+
+        Returns:
+            Packed payload dict with keys::
+
+                {
+                    "format_version": int,
+                    "n_samples": int,
+                    "schema": {key: spec, ...},
+                    "atom_ptr": LongTensor(n_samples+1),   # absent if no per-atom keys
+                    "edge_ptr": LongTensor(n_samples+1),   # absent if no per-edge keys
+                    "atoms":   {key: concat tensor, ...},
+                    "edges":   {key: concat tensor, ...},
+                    "graphs":  {key: stacked tensor, ...},
+                    "scalars": {key: [v0, v1, ...], ...},  # non-tensor values
+                    "task_states": {...},                  # optional
+                }
+
+            Also exposes ``payload["samples"]`` as a lazy list-like view
+            (each access reconstructs a sample dict on the fly). Mostly
+            for tests and compatibility — hot paths should use
+            :meth:`unpack_sample` directly to skip constructing an
+            intermediate list.
+        """
+        payload = torch.load(self._sink, mmap=mmap, weights_only=True)
+
+        version = payload.get("format_version")
+        if version != self.FORMAT_VERSION:
+            raise ValueError(
+                f"Cache file {self._sink} has format_version={version!r}, "
+                f"expected {self.FORMAT_VERSION}. The packed cache format "
+                "changed — delete the stale cache and rerun the pipeline."
+            )
+        payload["samples"] = _LazySampleView(payload)
+        return payload
+
+    @staticmethod
+    def unpack_sample(payload: Mapping[str, Any], idx: int) -> dict:
+        """Reconstruct the ``idx``-th sample dict from a packed payload.
+
+        Slices into the shared concat tensors — no storage copy when the
+        payload was loaded via ``torch.load(mmap=True)``.
+        """
+        return _unpack_one(payload, idx)
 
 
 # ---------------------------------------------------------------------------
-# Packed format: pack / unpack helpers
+# Packed format: pack / unpack helpers (module-private implementation)
 # ---------------------------------------------------------------------------
 
 
@@ -250,7 +298,7 @@ def _pack_samples(samples: list[dict]) -> dict[str, Any]:
     n = len(samples)
     if n == 0:
         return {
-            "format_version": _PACKED_FORMAT_VERSION,
+            "format_version": PackedCache.FORMAT_VERSION,
             "n_samples": 0,
             "schema": {},
             "atoms": {}, "edges": {}, "graphs": {}, "scalars": {},
@@ -288,7 +336,7 @@ def _pack_samples(samples: list[dict]) -> dict[str, Any]:
         edge_ptr.append(edge_ptr[-1] + ne)
 
     payload: dict[str, Any] = {
-        "format_version": _PACKED_FORMAT_VERSION,
+        "format_version": PackedCache.FORMAT_VERSION,
         "n_samples": n,
         "schema": schema,
         "atoms": {k: torch.cat([f[k] for f in flats], dim=0) for k in atom_keys},
@@ -303,12 +351,7 @@ def _pack_samples(samples: list[dict]) -> dict[str, Any]:
     return payload
 
 
-def unpack_one(payload: Mapping[str, Any], idx: int) -> dict:
-    """Reconstruct the ``idx``-th sample dict from a packed payload.
-
-    Slices into the shared concat tensors — no storage copy when the
-    payload was loaded via ``torch.load(mmap=True)``.
-    """
+def _unpack_one(payload: Mapping[str, Any], idx: int) -> dict:
     n = payload["n_samples"]
     if idx < 0:
         idx += n
@@ -342,8 +385,9 @@ class _LazySampleView:
     """List-like view that lazily reconstructs sample dicts on indexing.
 
     Exists mainly for test compatibility; downstream readers like
-    :class:`molix.data.dataset.MmapDataset` call :func:`unpack_one`
-    directly to avoid the method-dispatch indirection in tight loops.
+    :class:`molix.data.dataset.MmapDataset` call
+    :meth:`PackedCache.unpack_sample` directly to avoid the
+    method-dispatch indirection in tight loops.
     """
 
     __slots__ = ("_payload",)
@@ -356,12 +400,12 @@ class _LazySampleView:
 
     def __getitem__(self, idx: int) -> dict:
         if isinstance(idx, slice):
-            return [unpack_one(self._payload, i) for i in range(*idx.indices(len(self)))]
-        return unpack_one(self._payload, int(idx))
+            return [_unpack_one(self._payload, i) for i in range(*idx.indices(len(self)))]
+        return _unpack_one(self._payload, int(idx))
 
     def __iter__(self):
         for i in range(len(self)):
-            yield unpack_one(self._payload, i)
+            yield _unpack_one(self._payload, i)
 
 
 # -- schema inference + dict flattening -------------------------------------
@@ -490,31 +534,6 @@ def _infer_schema_across(
             schema[k] = ("graph", dtype, next(iter(full_shapes)))
 
     return schema
-
-
-def cache(
-    pipeline: "PipelineSpec",
-    source: "DataSource",
-    *,
-    sink: str | Path,
-    fit_source: "DataSource | None" = None,
-    overwrite: bool = False,
-) -> None:
-    """Run *pipeline* against *source* and cache the result atomically.
-
-    Equivalent to::
-
-        samples = list(run(pipeline, source, fit_source=fit_source))
-        save(sink, samples, task_states=collect_task_states(pipeline))
-
-    Leaves DDP, readiness checks, and path placement to the caller; see the
-    module docstring for the recommended workflow skeleton.
-    """
-    sink = Path(sink)
-    if sink.exists() and not overwrite:
-        return
-    samples = list(run(pipeline, source, fit_source=fit_source))
-    save(sink, samples, task_states=collect_task_states(pipeline), overwrite=overwrite)
 
 
 def _fsync_file(path: Path) -> None:
