@@ -116,9 +116,3 @@ cython_debug/
 # Examples (not shipped)
 examples/
 
-# Claude Code settings (project-local)
-# Ignore local state files (settings.json, scheduled_tasks.lock, …), but ship
-# repo-wide skill/agent definitions so the team's workflow is reproducible.
-.claude/*
-!.claude/skills/
-!.claude/agents/
