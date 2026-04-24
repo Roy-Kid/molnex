@@ -50,7 +50,7 @@ Copy the structure of `src/molzoo/specs/allegro_walkthrough.md` header (title, t
 ```markdown
 ## Run-linked investigations
 
-_Headings under this section are created by `molnex-scientist` when a run logged in `<encoder>_experiments.csv` triggers an investigation. Each heading is `#run-<id>-<slug>` and is referenced back from the CSV row's `note_ref` column._
+_Headings under this section are created by `molzoo-auditor` when a run logged in `<encoder>_experiments.csv` triggers an investigation. Each heading is `#run-<id>-<slug>` and is referenced back from the CSV row's `note_ref` column._
 ```
 
 ## Step 4 — Write `<encoder>_experiments.csv`

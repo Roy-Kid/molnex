@@ -24,9 +24,9 @@ Three skills + one agent maintain these artifacts as a closed loop:
 | Trigger | Command | Writes |
 |---------|---------|--------|
 | Introducing a new encoder | `/molzoo-spec-new <encoder> <arxiv_url>` | seeds `<encoder>.md` + `_walkthrough.md` + `_experiments.csv` |
-| After a benchmark or training run | `/molzoo-spec-log <encoder>` | appends one row to `_experiments.csv`; prompts `molnex-scientist` on MAE regression or dirty tree |
-| Debugging a question | `/molzoo-spec-lookup <encoder> <topic>` | read-only; refuses to fabricate, suggests `molnex-scientist` on a miss |
-| Verify code vs paper | `molnex-scientist` agent | appends ≥ 1 verdict row to `_walkthrough.md`; edits `<encoder>.md` only on ⚠️/🆚 |
+| After a benchmark or training run | `/molzoo-spec-log <encoder>` | appends one row to `_experiments.csv`; prompts `molzoo-auditor` on MAE regression or dirty tree |
+| Debugging a question | `/molzoo-spec-lookup <encoder> <topic>` | read-only; refuses to fabricate, suggests `molzoo-auditor` on a miss |
+| Verify code vs paper | `molzoo-auditor` agent | appends ≥ 1 verdict row to `_walkthrough.md`; edits `<encoder>.md` only on ⚠️/🆚 |
 
 **The loop never closes silently.** Every operation either updates an artifact or explicitly delegates the update. See `CLAUDE.md` for the full contract.
 

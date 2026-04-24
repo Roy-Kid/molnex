@@ -1,3 +1,26 @@
+---
+mol_project:
+  name: molnex
+  language: python
+  build:
+    install: "pip install -e '.[dev]'"
+    check: "ruff check src/ && ruff format --check src/"
+    test: "python -m pytest tests/ -v"
+    test_single: "python -m pytest {path} -v"
+    coverage: "python -m pytest tests/ --cov=src --cov-report=term-missing"
+  arch:
+    style: package-tree
+    rules_section: "## Architecture"
+  doc:
+    style: google
+  perf:
+    focus: pytorch
+  science:
+    required: true
+  notes_path: .claude/NOTES.md
+  specs_path: .claude/specs/
+---
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -148,6 +171,44 @@ def forward(self, node_feats: torch.Tensor, edge_index: torch.Tensor) -> torch.T
     """
 ```
 
+## Generic workflow — use the `mol` plugin
+
+The workflow verbs (plan → build → verify → document → ship) live in the
+[`mol` plugin](../claude-plugin/). Install once from any cwd:
+
+```
+/plugin marketplace add /Users/roykid/work/molcrafts/claude-plugin
+/plugin install mol@molcrafts
+```
+
+From the MolNex root, the `mol_project:` frontmatter at the top of this
+file tells every skill which commands to run. Use:
+
+| Was (deprecated)   | Use instead        | Notes                                   |
+|--------------------|--------------------|-----------------------------------------|
+| `/molnex-impl`     | `/mol:impl`        | Full scope → litrev → spec → TDD → impl |
+| `/molnex-spec`     | `/mol:spec`        | Natural-language → `.claude/specs/`     |
+| `/molnex-litrev`   | `/mol:litrev`      | Paper + reference-impl credibility      |
+| `/molnex-arch`     | `/mol:arch`        | Reads `arch.rules_section` (this file)  |
+| `/molnex-review`   | `/mol:review`      | Fans out architect ∥ optimizer ∥ documenter ∥ undergrad ∥ scientist |
+| `/molnex-test`     | `/mol:test`        | Runs `build.test`                       |
+| `/molnex-perf`     | `/mol:perf`        | Uses `perf.focus: pytorch`              |
+| `/molnex-docs`     | `/mol:docs`        | Uses `doc.style: google`                |
+| —                  | `/mol:note`        | Capture into `.claude/NOTES.md`         |
+| —                  | `/mol:fix`         | Minimal-diff bug fix                    |
+| —                  | `/mol:debug`       | Diagnose-only — never writes code       |
+| —                  | `/mol:refactor`    | Restructure preserving invariants       |
+| —                  | `/mol:ship commit` | Pre-commit gate (format + lint)         |
+| —                  | `/mol:ship push`   | Pre-push gate (+ full test suite)       |
+| —                  | `/mol:ship merge`  | Pre-merge CI-parity gate                |
+
+MolNex-specific agents remain: `ml-expert` (training dynamics — ML
+axis not covered by the generic plugin) and `molzoo-auditor` (the
+molzoo spec-walkthrough writer — see below). The former
+`molnex-compute-scientist` and `molnex-pm` have been promoted into
+the plugin as generic `compute-scientist` and `pm` agents and are now
+invoked via `/mol:review`.
+
 ## Molzoo spec workflow — skills and agent
 
 Each encoder in `src/molzoo/` owns three sibling artifacts in `src/molzoo/specs/`:
@@ -161,15 +222,15 @@ The following skills and agent keep those three artifacts in sync. **All are rep
 | Command | Type | Purpose |
 |---------|------|---------|
 | `/molzoo-spec-new <encoder> <arxiv_url>` | skill | Scaffold `<encoder>.md`, `<encoder>_walkthrough.md`, `<encoder>_experiments.csv` with the Reference section populated from the arXiv page. Refuses to overwrite existing artifacts. |
-| `/molzoo-spec-log <encoder>` | skill | Append one row to `<encoder>_experiments.csv` after a bench/train run. On MAE regression (> 10 %) or dirty tree, prompts to open a `molnex-scientist` investigation and stubs a `run-<N>-<slug>` heading. |
-| `/molzoo-spec-lookup <encoder> <topic>` | skill | Read-only retrieval of spec + walkthrough sections for a topic. **Refuses to fabricate**: if the topic is uncovered, it suggests `molnex-scientist` rather than summarising the paper from memory. |
-| `molnex-scientist` | agent | Fetches the paper, compares to code, and appends a verdict row to `<encoder>_walkthrough.md`. Edits `<encoder>.md` only when the verdict is ⚠️/🆚. Required to write ≥ 1 walkthrough entry per invocation. |
+| `/molzoo-spec-log <encoder>` | skill | Append one row to `<encoder>_experiments.csv` after a bench/train run. On MAE regression (> 10 %) or dirty tree, prompts to open a `molzoo-auditor` investigation and stubs a `run-<N>-<slug>` heading. |
+| `/molzoo-spec-lookup <encoder> <topic>` | skill | Read-only retrieval of spec + walkthrough sections for a topic. **Refuses to fabricate**: if the topic is uncovered, it suggests `molzoo-auditor` rather than summarising the paper from memory. |
+| `molzoo-auditor` | agent | Fetches the paper, compares to code, and appends a verdict row to `<encoder>_walkthrough.md`. Edits `<encoder>.md` only when the verdict is ⚠️/🆚. Required to write ≥ 1 walkthrough entry per invocation. |
 
 **Closed-loop contract.** Every operation either updates an artifact or explicitly delegates the update — no operation closes silently:
 
-1. `/molzoo-spec-log` is append-only on the CSV; it **must** check the previous row and prompt scientist hand-off on anomalies, backfilling `note_ref` on the just-written row if the user accepts.
-2. `/molzoo-spec-lookup` **must** refuse on a topic miss and point at `molnex-scientist`.
-3. `molnex-scientist` **must** produce ≥ 1 walkthrough row per invocation (even just `✅ confirmed, no drift`) citing the triggering `run_id` or question + paper section + code file:line.
+1. `/molzoo-spec-log` is append-only on the CSV; it **must** check the previous row and prompt auditor hand-off on anomalies, backfilling `note_ref` on the just-written row if the user accepts.
+2. `/molzoo-spec-lookup` **must** refuse on a topic miss and point at `molzoo-auditor`.
+3. `molzoo-auditor` **must** produce ≥ 1 walkthrough row per invocation (even just `✅ confirmed, no drift`) citing the triggering `run_id` or question + paper section + code file:line.
 4. `/molzoo-spec-new` is the only operation that writes to all three artifacts at once and only for a previously-absent encoder.
 
 Invariants are enforced **inside each skill**, not via `settings.json` hooks, for now.

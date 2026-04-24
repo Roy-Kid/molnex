@@ -25,7 +25,7 @@ from molix.data.task import (
 )
 
 # Built-in tasks
-from molix.data.tasks import AtomicDress, NeighborList
+from molix.data.tasks import AtomicDress, NeighborList, UnitConvert
 
 # Data sources
 from molix.data.source import DataSource, InMemorySource, SubsetSource
@@ -74,6 +74,7 @@ __all__ = [
     # Built-in tasks
     "NeighborList",
     "AtomicDress",
+    "UnitConvert",
     # Sources
     "DataSource",
     "InMemorySource",

@@ -1,28 +1,18 @@
 """Allegro: local equivariant edge encoder.
 
-Pair-level equivariant encoder using iterated tensor products with neighborhood
-aggregation. It returns edge features only; downstream parameterization, potential
-composition, and force derivation live outside this module.
+Pair-level equivariant encoder using iterated tensor products with neighbourhood
+aggregation. Returns per-layer per-edge scalar features only — readout, energy
+aggregation, and any rescaling live in :mod:`molpot.heads`.
 
-Example:
-    >>> from molzoo.allegro import Allegro
-    >>> encoder = Allegro(
-    ...     num_elements=118,
-    ...     num_scalar_features=64,
-    ...     num_tensor_features=16,
-    ...     r_max=5.0,
-    ... )
-    >>> features = encoder(
-    ...     Z=Z,
-    ...     bond_dist=bond_dist,
-    ...     bond_diff=bond_diff,
-    ...     edge_index=edge_index,
-    ... )
-    >>> print(features.shape)  # (n_edges, num_layers, num_scalar)
+This module is a **redesign** (2026-04): it matches the paper's residual update
+exactly (``u(r_ij)`` gates the MLP update inside every layer), drops the
+post-layer-loop cutoff hack, drops the extra post-TP tensor-track rescaling,
+and removes the spurious trailing SiLU on the scalar MLP. See
+``src/molzoo/specs/allegro.md`` for the full math.
 
 Reference:
     Musaelian et al. "Learning Local Equivariant Representations for
-    Large-Scale Atomistic Dynamics" Nature Communications 2023
+    Large-Scale Atomistic Dynamics" Nature Communications 14, 579 (2023)
     https://arxiv.org/abs/2204.05249
 """
 
@@ -47,7 +37,7 @@ from molrep.interaction.tensor_product import irreps_from_l_max, sh_irreps_from_
 
 
 # ===========================================================================
-# Shared helper
+# Helpers — pure functions on ir_mul-layout tensors
 # ===========================================================================
 
 
@@ -60,9 +50,9 @@ def _env_weight_harmonics(
 ) -> torch.Tensor:
     """Weight spherical harmonics by per-channel environment weights.
 
-    For each angular momentum l, computes the outer product of the (2l+1)
-    spherical harmonic components with the ``num_tensor_features`` channel
-    weights, then lays them out in ``ir_mul`` order.
+    For each angular momentum ``l``, outer-products the ``(2l+1)`` spherical
+    harmonic components with the ``num_tensor_features`` channel weights in
+    ``ir_mul`` layout.
 
     Args:
         edge_angular: Spherical harmonics ``(n_edges, sh_dim)``.
@@ -74,24 +64,24 @@ def _env_weight_harmonics(
     Returns:
         Weighted tensor features ``(n_edges, irreps_dim)`` in ir_mul layout.
     """
-    result = torch.zeros(
+    out = torch.zeros(
         edge_angular.shape[0],
         irreps_dim,
         dtype=edge_angular.dtype,
         device=edge_angular.device,
     )
-    offset_sh = 0
-    offset_tp = 0
+    off_sh = 0
+    off_tp = 0
     for l in range(l_max + 1):
         deg = 2 * l + 1
-        ylm = edge_angular[:, offset_sh : offset_sh + deg]
+        ylm = edge_angular[:, off_sh : off_sh + deg]
         block = (ylm.unsqueeze(-1) * env_weights.unsqueeze(-2)).reshape(
             ylm.shape[0], -1
         )
-        result[:, offset_tp : offset_tp + deg * num_tensor_features] = block
-        offset_sh += deg
-        offset_tp += deg * num_tensor_features
-    return result
+        out[:, off_tp : off_tp + deg * num_tensor_features] = block
+        off_sh += deg
+        off_tp += deg * num_tensor_features
+    return out
 
 
 def _scale_by_channel(
@@ -102,14 +92,8 @@ def _scale_by_channel(
 ) -> torch.Tensor:
     """Scale an ir_mul tensor feature by per-channel scalar weights.
 
-    For each angular momentum l and each magnetic quantum number m, multiplies
-    each of the ``num_tensor_features`` channels by the corresponding element
-    of ``scale``.  This is an O(3)-equivariant operation (scalar × equivariant
-    = equivariant).
-
     Args:
-        tensor: Equivariant tensor in ir_mul layout
-            ``(n_edges, irreps_dim)``.
+        tensor: Equivariant tensor in ir_mul layout ``(n_edges, irreps_dim)``.
         scale: Per-channel scale factors ``(n_edges, num_tensor_features)``.
         l_max: Maximum angular momentum.
         num_tensor_features: Number of tensor feature channels.
@@ -117,46 +101,74 @@ def _scale_by_channel(
     Returns:
         Scaled tensor ``(n_edges, irreps_dim)`` in ir_mul layout.
     """
-    result = torch.empty_like(tensor)
+    out = torch.empty_like(tensor)
     offset = 0
     for l in range(l_max + 1):
         deg = 2 * l + 1
         bsz = deg * num_tensor_features
         block = tensor[:, offset : offset + bsz].reshape(-1, deg, num_tensor_features)
-        result[:, offset : offset + bsz] = (block * scale.unsqueeze(-2)).reshape(
-            -1, bsz
-        )
+        out[:, offset : offset + bsz] = (block * scale.unsqueeze(-2)).reshape(-1, bsz)
         offset += bsz
-    return result
+    return out
+
+
+def _make_scalar_mlp(
+    in_dim: int,
+    hiddens: list[int],
+    out_dim: int,
+    activation: type[nn.Module] | None = nn.SiLU,
+) -> nn.Sequential:
+    """Build ``[Linear→act] * len(hiddens) → Linear`` (paper ScalarMLP layout).
+
+    The final linear has **no** activation (matches
+    ``mir-group/allegro::ScalarMLPFunction``). Pass ``activation=None`` to get
+    a pure linear stack.
+    """
+    layers: list[nn.Module] = []
+    prev = in_dim
+    for h in hiddens:
+        layers.append(nn.Linear(prev, h, dtype=config.ftype))
+        if activation is not None:
+            layers.append(activation())
+        prev = h
+    layers.append(nn.Linear(prev, out_dim, dtype=config.ftype))
+    return nn.Sequential(*layers)
 
 
 # ===========================================================================
-# PairEmbedding Block
+# PairEmbedding — two-body radial-chemical embedding
 # ===========================================================================
 
 
 class PairEmbedding(nn.Module):
     """Two-body radial-chemical embedding on edges.
 
-    Computes initial scalar and tensor features for each atom pair (edge)
-    from radial distances, spherical harmonics, and atom type embeddings.
-
     Architecture::
 
         bond_dist → BesselRBF * PolynomialCutoff → edge_radial
         edge_dir  → SphericalHarmonics → edge_angular
-        Z_i, Z_j  → [Embed(Z_i) ⊕ Embed(Z_j)] → type_embed  (concatenation)
-        (edge_radial ⊕ type_embed) → MLP → scalar_features
+        Z_i, Z_j  → [Embed(Z_i) ⊕ Embed(Z_j)] → type_embed   (concat)
+        (edge_radial ⊕ type_embed) → ScalarMLP → scalar_features
         scalar_features → Linear → tensor_env_weights
-        tensor_env_weights ⊗ edge_angular → tensor_features (ir_mul layout)
+        tensor_env_weights ⊗ edge_angular → tensor_features  (ir_mul layout)
 
-    Attributes:
-        radial_basis: Bessel radial basis functions.
-        cutoff_fn: Polynomial cutoff envelope.
-        spherical_harmonics: Spherical harmonics for angular features.
-        type_embedding: Atom type embedding layer.
-        scalar_mlp: MLP producing initial scalar features.
-        tensor_env: Linear projection for initial tensor env weights.
+    The scalar MLP follows paper convention: ``[Linear→SiLU] × k → Linear``
+    with no activation after the final linear. Reference:
+    ``mir-group/allegro/nn/_fc.py::ScalarMLPFunction``.
+
+    Args:
+        num_elements: Size of the atom-type embedding table (``Z`` is used
+            directly as index, so this must be ``> max Z`` in the dataset).
+        num_scalar_features: Output scalar feature dim ``F_s``.
+        num_tensor_features: Tensor feature channel count ``u``.
+        r_max: Cutoff radius (Å).
+        num_bessel: Bessel basis size.
+        l_max: Maximum angular momentum for spherical harmonics.
+        type_emb_dim: Dim of each per-atom type embedding (concatenated source
+            and destination embeddings have total dim ``2 * type_emb_dim``).
+        scalar_mlp_hiddens: Hidden dims of the 2-body scalar MLP. Paper QM9:
+            ``[128, 256, 512]`` (then final ``Linear → num_scalar_features``).
+        poly_p: Polynomial cutoff exponent.
     """
 
     def __init__(
@@ -178,35 +190,31 @@ class PairEmbedding(nn.Module):
         self.num_tensor_features = num_tensor_features
         self.l_max = l_max
 
-        # Radial basis + cutoff
         self.radial_basis = BesselRBF(r_cut=r_max, num_radial=num_bessel)
         self.cutoff_fn = PolynomialCutoff(r_cut=r_max, exponent=poly_p)
-
-        # Angular basis
         self.spherical_harmonics = SphericalHarmonics(l_max=l_max)
 
-        # Atom type embedding: separate embeddings for source and destination,
-        # concatenated to preserve centre-neighbour directionality.
-        self.type_embedding = nn.Embedding(num_elements, type_emb_dim, dtype=config.ftype)
+        self.type_embedding = nn.Embedding(
+            num_elements, type_emb_dim, dtype=config.ftype
+        )
 
-        # Two-body scalar MLP: (edge_radial ⊕ type_src ⊕ type_dst) →
-        # hidden_1 → hidden_2 → … → num_scalar_features.
         scalar_in_dim = num_bessel + 2 * type_emb_dim
         if scalar_mlp_hiddens is None:
             scalar_mlp_hiddens = [num_scalar_features, num_scalar_features]
-        hiddens = list(scalar_mlp_hiddens) + [num_scalar_features]
-        layers: list[nn.Module] = []
-        prev = scalar_in_dim
-        for h in hiddens:
-            layers.append(nn.Linear(prev, h, dtype=config.ftype))
-            layers.append(nn.SiLU())
-            prev = h
-        self.scalar_mlp = nn.Sequential(*layers)
+        self.scalar_mlp = _make_scalar_mlp(
+            in_dim=scalar_in_dim,
+            hiddens=list(scalar_mlp_hiddens),
+            out_dim=num_scalar_features,
+            activation=nn.SiLU,
+        )
 
-        # Tensor track: scalar → environment weights for initial tensor features
         with cue.assume(O3):
-            self.irreps_dim = Irreps(irreps_from_l_max(l_max, num_tensor_features)).dim
-        self.tensor_env = nn.Linear(num_scalar_features, num_tensor_features, dtype=config.ftype)
+            self.irreps_dim = Irreps(
+                irreps_from_l_max(l_max, num_tensor_features)
+            ).dim
+        self.tensor_env = nn.Linear(
+            num_scalar_features, num_tensor_features, dtype=config.ftype
+        )
 
     def forward(
         self,
@@ -220,104 +228,80 @@ class PairEmbedding(nn.Module):
         Args:
             Z: Atomic numbers ``(n_nodes,)``.
             bond_dist: Bond distances ``(n_edges,)``.
-            bond_diff: Bond vectors ``(n_edges, 3)``.
-            edge_index: Edge indices ``(n_edges, 2)``.
+            bond_diff: Bond vectors ``(n_edges, 3)`` (pos[target] - pos[source]).
+            edge_index: Edge indices ``(n_edges, 2)``, ``[:, 0]=source``.
 
         Returns:
-            Tuple of:
-                - scalar_features: ``(n_edges, num_scalar_features)``
-                - tensor_features: ``(n_edges, irreps_dim)``
-                - edge_angular: ``(n_edges, sh_dim)``
-                - edge_cutoff: ``(n_edges,)``
+            ``(scalar_features, tensor_features, edge_angular, edge_cutoff)``
+            with shapes ``(E, F_s)``, ``(E, irreps_dim)``, ``(E, sh_dim)``,
+            ``(E,)``.
         """
         src, dst = edge_index[:, 0], edge_index[:, 1]
 
-        # Radial features with cutoff envelope
         edge_radial = self.radial_basis(bond_dist)
         edge_cutoff = self.cutoff_fn(bond_dist)
         edge_radial = edge_radial * edge_cutoff.unsqueeze(-1)
 
-        # Angular features
         edge_dir = bond_diff / (bond_dist.unsqueeze(-1) + 1e-8)
         edge_angular = self.spherical_harmonics(edge_dir)
 
-        # Type embedding: concatenate source and destination embeddings
-        # to preserve centre-neighbour directionality (vs element-wise product).
         type_src = self.type_embedding(Z[src])
         type_dst = self.type_embedding(Z[dst])
         type_embed = torch.cat([type_src, type_dst], dim=-1)
 
-        # Scalar MLP
         scalar_in = torch.cat([edge_radial, type_embed], dim=-1)
         scalar_features = self.scalar_mlp(scalar_in)
 
-        # Initial tensor features via shared helper
         env_weights = self.tensor_env(scalar_features)
         tensor_features = _env_weight_harmonics(
-            edge_angular, env_weights, self.l_max, self.num_tensor_features, self.irreps_dim
+            edge_angular,
+            env_weights,
+            self.l_max,
+            self.num_tensor_features,
+            self.irreps_dim,
         )
 
         return scalar_features, tensor_features, edge_angular, edge_cutoff
 
 
 # ===========================================================================
-# AllegroLayer
+# AllegroLayer — single TP-based layer with cutoff-gated residual
 # ===========================================================================
 
 
 class AllegroLayer(nn.Module):
-    """Pair-level tensor product layer with neighbourhood aggregation.
+    """Pair-level tensor product layer with cutoff-gated residual update.
 
-    Each layer:
+    Flow, for each edge ``(i, j)``:
 
-    1. Computes per-edge env weights from the current scalar features.
-    2. Pre-scales ``tensor_features`` channel-wise by those env weights.
-    3. Aggregates *unweighted* spherical harmonics to source nodes, giving a
-       single-channel neighbourhood embedding ``node_Y`` (many-body context).
-       The aggregation is normalized by ``1/sqrt(avg_num_neighbors)`` per the
-       Allegro SI (falls back to per-sample ``1/sqrt(|N(i)|)`` when the
-       constant is not supplied).
-    4. Tensor-products the scaled edge features with the neighbourhood Y,
-       using ``ChannelWiseTensorProduct(irreps_in, sh_irreps)`` — the same
-       fast kernel path as in the original Allegro reference.
-    5. Projects the TP output back to ``irreps_in`` via an equivariant linear.
-    6. Extracts L=0 scalar invariants from the new tensor features.
-    7. Runs a latent MLP on ``[current_scalar, invariants]`` and applies the
-       paper's residual update ``x_L = a·x_{L-1} + b·MLP(..)`` with
-       ``α = residual_alpha`` and ``a = 1/√(1+α²)``, ``b = α/√(1+α²)``.
-    8. Scales the new tensor features by per-channel weights derived from the
-       updated scalars.
+    1. ``env_w_ij = Linear(scalar_ij)`` → per-channel env weight ``(E, u)``.
+    2. ``V_scaled_ij = env_w_ij · V_ij`` (channel-wise scale).
+    3. Aggregate single-channel neighbourhood ``Y_i = Σ_{k∈N(i)} Y_ik``,
+       normalized by ``1/√avg_num_neighbors`` (paper SI) with per-sample
+       ``1/√|N(i)|`` fallback if the dataset constant is not supplied.
+    4. ``new_tensor_ij = Linear(TP(V_scaled_ij, Y_i))``   (paper eq. 21).
+    5. ``invariants_ij = new_tensor_ij[:, :u]``           (L=0 scalars).
+    6. ``mlp_out_ij = u(r_ij) · LatentMLP([scalar_ij, invariants_ij])``
+       — **the cutoff gate is applied per-layer on the MLP output, matching
+       ``mir-group/allegro::_allegro.py:494``**.
+    7. ``scalar_ij ← a · scalar_ij + b · mlp_out_ij`` with
+       ``a = 1/√(1+α²), b = α/√(1+α²)``  (paper SI α-residual, α=0.5).
+    8. ``V_ij ← new_tensor_ij``  (no post-TP rescale — matches paper).
 
-    Why this TP decomposition is fast and correct
-    ---------------------------------------------
-    The original Allegro computes ``TP(V_{ij}, sum_k env_w_k * Y_k)`` where
-    both sides carry ``num_tensor_features`` channels, causing cuEquivariance
-    to fall back to a slow naive path.
+    The single-channel right operand in step 4 lets us use the fast
+    ``ChannelWiseTensorProduct`` kernel; see ``specs/allegro.md §7`` for why
+    the bilinearity of the CG tensor product makes this physically equivalent
+    to the paper's per-channel-weighted formulation.
 
-    Instead we factor the product as::
-
-        TP(env_w_{ij} · V_{ij},  Y_agg_i)
-        where  Y_agg_i = normalize * sum_{k in N(i)} Y_k   (single-channel)
-
-    By the bilinearity of the CG tensor product:
-
-        TP(c · A, B) = c · TP(A, B)   for scalar c
-
-    so scaling the *left* input by ``env_w`` is equivalent to scaling the TP
-    output by ``env_w``.  The right-hand side ``Y_agg`` stays single-channel
-    (``sh_irreps``), preserving the fast ``ChannelWiseTensorProduct(irreps_in,
-    sh_irreps)`` execution path while still encoding the full neighbourhood
-    geometry in each layer.
-
-    Attributes:
-        tp: cuEquivariance ChannelWiseTensorProduct (irreps_in × sh_irreps).
-        tp_linear: Equivariant linear projecting TP output back to irreps_in.
-        env_embed: Linear mapping the current scalars → pre-TP env weights.
-        latent_mlp: MLP processing ``[current scalar, fresh invariants]``.
-        tensor_env: Linear mapping updated scalars → post-TP tensor env weights.
-        residual_a, residual_b: Pre-computed residual mixing coefficients.
-        avg_num_neighbors: Dataset-level constant used for sqrt-normalisation
-            of the neighbour aggregation (``None`` → per-sample fallback).
+    Args:
+        num_scalar_features: Scalar feature dim ``F_s``.
+        num_tensor_features: Tensor feature channel count ``u``.
+        l_max: Maximum angular momentum.
+        latent_mlp_hiddens: Hidden dims of the latent MLP.
+        latent_activation: Activation class for the latent MLP; pass ``None``
+            for a pure linear stack (3BPA setup).
+        avg_num_neighbors: Dataset-wide ⟨|N(i)|⟩. ``None`` → per-sample fallback.
+        residual_alpha: Residual mixing weight α (paper default 0.5).
     """
 
     def __init__(
@@ -342,13 +326,9 @@ class AllegroLayer(nn.Module):
 
         irreps_str = irreps_from_l_max(l_max, num_tensor_features)
         sh_irreps_str = sh_irreps_from_l_max(l_max)
-
         cue_irreps_in = cue.Irreps("O3", irreps_str)
         cue_irreps_sh = cue.Irreps("O3", sh_irreps_str)
 
-        # Tensor product: pre-scaled edge features ⊗ aggregated neighbourhood Y.
-        # Right-hand side uses sh_irreps (single-channel) → fast kernel path,
-        # same as the original Allegro implementation.
         self.tp = cuet.ChannelWiseTensorProduct(
             cue_irreps_in,
             cue_irreps_sh,
@@ -357,36 +337,28 @@ class AllegroLayer(nn.Module):
             internal_weights=True,
             dtype=config.ftype,
         )
-
-        # Equivariant linear: project TP output back to input irreps
-        tp_out_irreps = self.tp.irreps_out
         self.tp_linear = cuet.Linear(
-            irreps_in=tp_out_irreps,
+            irreps_in=self.tp.irreps_out,
             irreps_out=cue_irreps_in,
             layout=cue.ir_mul,
             dtype=config.ftype,
         )
 
-        # Pre-TP env embed: current scalars → per-channel tensor_features scale.
-        self.env_embed = nn.Linear(num_scalar_features, num_tensor_features, dtype=config.ftype)
+        # Pre-TP env embed: current scalars → per-channel V scale.
+        self.env_embed = nn.Linear(
+            num_scalar_features, num_tensor_features, dtype=config.ftype
+        )
 
-        # Latent MLP input = [current scalar features, fresh L=0 invariants].
-        latent_in_dim = num_scalar_features + num_tensor_features
+        # Latent MLP: [x, invariants] → scalar update.  Final layer linear.
         hiddens = list(latent_mlp_hiddens) if latent_mlp_hiddens else []
-        mlp_layers: list[nn.Module] = []
-        in_dim = latent_in_dim
-        for h in hiddens:
-            mlp_layers.append(nn.Linear(in_dim, h, dtype=config.ftype))
-            if latent_activation is not None:
-                mlp_layers.append(latent_activation())
-            in_dim = h
-        mlp_layers.append(nn.Linear(in_dim, num_scalar_features, dtype=config.ftype))
-        self.latent_mlp = nn.Sequential(*mlp_layers)
+        self.latent_mlp = _make_scalar_mlp(
+            in_dim=num_scalar_features + num_tensor_features,
+            hiddens=hiddens,
+            out_dim=num_scalar_features,
+            activation=latent_activation,
+        )
 
-        # Post-TP tensor env: maps updated scalars → per-channel output scaling
-        self.tensor_env = nn.Linear(num_scalar_features, num_tensor_features, dtype=config.ftype)
-
-        # Residual coefficients (Allegro SI): x_L = a·x_{L-1} + b·MLP(...).
+        # α-residual mixing (paper SI).
         alpha = float(residual_alpha)
         denom = math.sqrt(1.0 + alpha * alpha)
         self.residual_a = 1.0 / denom
@@ -394,9 +366,6 @@ class AllegroLayer(nn.Module):
 
         with cue.assume(O3):
             self.irreps_dim = Irreps(irreps_str).dim
-
-        # sh_dim needed for node-Y aggregation buffer
-        with cue.assume(O3):
             self._sh_dim = Irreps(sh_irreps_str).dim
 
     def forward(
@@ -404,84 +373,88 @@ class AllegroLayer(nn.Module):
         scalar_features: torch.Tensor,
         tensor_features: torch.Tensor,
         edge_angular: torch.Tensor,
+        edge_cutoff: torch.Tensor,
         edge_index: torch.Tensor,
         n_nodes: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Update pair features via neighbourhood-aggregated tensor product.
+        """Apply one Allegro layer.
 
         Args:
-            scalar_features: Current scalar features
-                ``(n_edges, num_scalar_features)`` produced by the previous
-                layer (or the pair embedding for layer 0).
-            tensor_features: Equivariant tensor track ``(n_edges, irreps_dim)``.
-            edge_angular: Spherical harmonics reused from embedding
-                ``(n_edges, sh_dim)``.
-            edge_index: Edge connectivity ``(n_edges, 2)``.
-            n_nodes: Number of nodes in the graph.
+            scalar_features: ``(n_edges, F_s)`` current scalar track.
+            tensor_features: ``(n_edges, irreps_dim)`` current tensor track.
+            edge_angular: ``(n_edges, sh_dim)`` spherical harmonics from the
+                embedding (reused across layers).
+            edge_cutoff: ``(n_edges,)`` polynomial-cutoff factor ``u(r_ij)``.
+            edge_index: ``(n_edges, 2)`` with ``[:,0]=source``.
+            n_nodes: Number of nodes in the batch.
 
         Returns:
-            Tuple of updated
-                ``(scalar_features (n_edges, num_scalar_features),
-                   tensor_features (n_edges, irreps_dim))``.
+            ``(scalar_out, tensor_out)`` with the same shapes as the inputs.
+            ``scalar_out`` decays smoothly to ``a · scalar_in`` as
+            ``r → r_cut`` because the MLP update is gated by ``u(r_ij)``.
         """
         src = edge_index[:, 0]
 
-        # --- Pre-scale tensor_features by env weights (fast, left-side only) ---
-        env_w = self.env_embed(scalar_features)  # (n_edges, num_tensor)
+        # (1-2) Pre-scale V by env weights.
+        env_w = self.env_embed(scalar_features)                       # (E, u)
         scaled_V = _scale_by_channel(
             tensor_features, env_w, self.l_max, self.num_tensor_features
-        )  # (n_edges, irreps_dim)
+        )                                                             # (E, irreps)
 
-        # --- Many-body neighbourhood aggregation (single-channel Y) ---
+        # (3) Neighbour aggregation of spherical harmonics (single channel).
         node_Y = torch.zeros(
             n_nodes,
             self._sh_dim,
             dtype=tensor_features.dtype,
             device=tensor_features.device,
         )
-        node_Y.scatter_add_(0, src.unsqueeze(-1).expand_as(edge_angular), edge_angular)
-
-        # sqrt-normalise per Allegro SI. If avg_num_neighbors is given it is
-        # a dataset-wide constant; otherwise fall back to per-node sqrt(|N(i)|).
+        node_Y.scatter_add_(
+            0, src.unsqueeze(-1).expand_as(edge_angular), edge_angular
+        )
         if self.avg_num_neighbors is not None:
             node_Y = node_Y / math.sqrt(self.avg_num_neighbors)
         else:
             src_count = torch.zeros(
-                n_nodes, dtype=tensor_features.dtype, device=tensor_features.device
+                n_nodes,
+                dtype=tensor_features.dtype,
+                device=tensor_features.device,
             )
             src_count.scatter_add_(
                 0,
                 src,
                 torch.ones(
-                    src.shape[0], dtype=tensor_features.dtype, device=tensor_features.device
+                    src.shape[0],
+                    dtype=tensor_features.dtype,
+                    device=tensor_features.device,
                 ),
             )
             node_Y = node_Y / src_count.clamp(min=1.0).sqrt().unsqueeze(-1)
+        edge_node_Y = node_Y[src]                                     # (E, sh_dim)
 
-        # Pull aggregated neighbourhood Y back to each edge via its source atom
-        edge_node_Y = node_Y[src]  # (n_edges, sh_dim)
-
-        # --- Tensor product: (env_w · V) ⊗ Y_agg  [FAST: sh_irreps right side] ---
+        # (4) Tensor product → project back to input irreps.
         tp_out = self.tp(scaled_V, edge_node_Y)
-        new_tensor = self.tp_linear(tp_out)
+        new_tensor = self.tp_linear(tp_out)                           # (E, irreps)
 
-        # --- Scalar track update (paper residual, α = residual_alpha) ---
-        invariants = new_tensor[:, : self.num_tensor_features]
-        combined = torch.cat([scalar_features, invariants], dim=-1)
-        mlp_out = self.latent_mlp(combined)
-        updated_scalars = self.residual_a * scalar_features + self.residual_b * mlp_out
+        # (5) Extract L=0 invariants.
+        invariants = new_tensor[:, : self.num_tensor_features]        # (E, u)
 
-        # --- Tensor track update ---
-        env_weights_out = self.tensor_env(updated_scalars)
-        updated_tensor = _scale_by_channel(
-            new_tensor, env_weights_out, self.l_max, self.num_tensor_features
+        # (6) Cutoff-gated latent MLP update.
+        mlp_out = self.latent_mlp(
+            torch.cat([scalar_features, invariants], dim=-1)
+        )                                                             # (E, F_s)
+        mlp_out = mlp_out * edge_cutoff.unsqueeze(-1)
+
+        # (7) α-residual.
+        updated_scalars = (
+            self.residual_a * scalar_features + self.residual_b * mlp_out
         )
 
-        return updated_scalars, updated_tensor
+        # (8) No post-TP tensor rescale — paper-faithful.
+        return updated_scalars, new_tensor
 
 
 # ===========================================================================
-# Allegro Encoder
+# Allegro — encoder
 # ===========================================================================
 
 
@@ -505,26 +478,19 @@ class AllegroSpec(BaseModel):
 
 
 class Allegro(TensorDictModuleBase):
-    """Allegro equivariant feature encoder.
+    """Allegro equivariant edge encoder.
 
-    Accepts a ``GraphBatch`` TensorDict and writes ``edge_features``
-    into the ``edges`` sub-dict.
+    Reads ``(atoms.Z, edges.edge_index, edges.bond_diff, edges.bond_dist)``
+    from a :class:`~molix.data.types.GraphBatch` and writes
+    ``edges.edge_features`` of shape ``(n_edges, num_layers, num_scalar)``.
 
-    Architecture::
-
-        GraphBatch(atoms, edges)
-          → [PairEmbedding]  → scalar₀, tensor₀, edge_angular
-          → [AllegroLayer₁]  → scalar₁, tensor₁   (residual on scalar track)
-          → ...
-          → edges.edge_features (n_edges, num_layers, num_scalar)
-
-    The scalar track uses the Allegro SI residual update with α = 0.5:
-
-        x_L = (1/√(1+α²)) x_{L-1} + (α/√(1+α²)) MLP([x_{L-1}, invariants_L])
+    The stored per-layer scalars are already cutoff-gated (the gate is applied
+    inside each :class:`AllegroLayer` on the MLP update), so downstream heads
+    can consume them directly without re-multiplying by ``u(r_ij)``.
 
     Reference:
         Musaelian et al. "Learning Local Equivariant Representations for
-        Large-Scale Atomistic Dynamics" Nature Communications 2023
+        Large-Scale Atomistic Dynamics" Nature Communications 14, 579 (2023)
         https://arxiv.org/abs/2204.05249
     """
 
@@ -570,7 +536,6 @@ class Allegro(TensorDictModuleBase):
             residual_alpha=residual_alpha,
         )
 
-        # Pair embedding (two-body)
         self.embedding = PairEmbedding(
             num_elements=num_elements,
             num_scalar_features=num_scalar_features,
@@ -582,8 +547,6 @@ class Allegro(TensorDictModuleBase):
             poly_p=poly_p,
         )
 
-        # Allegro layers: identical signature across layers since the residual
-        # update keeps ``scalar_features`` at ``num_scalar_features`` dim.
         self.layers = nn.ModuleList(
             [
                 AllegroLayer(
@@ -600,14 +563,14 @@ class Allegro(TensorDictModuleBase):
         )
 
     def forward(self, td: GraphBatch) -> GraphBatch:
-        """Extract per-layer pair scalar features.
+        """Populate ``edges.edge_features`` on ``td`` in place.
 
         Args:
             td: ``GraphBatch`` with ``atoms`` and ``edges`` sub-dicts.
 
         Returns:
-            Same ``GraphBatch`` with ``edges.edge_features``
-            ``(n_edges, num_layers, num_scalar)`` added.
+            The same ``GraphBatch`` with ``edges.edge_features`` of shape
+            ``(n_edges, num_layers, num_scalar_features)``.
         """
         Z = td["atoms", "Z"]
         bond_dist = td["edges", "bond_dist"]
@@ -615,28 +578,24 @@ class Allegro(TensorDictModuleBase):
         edge_index = td["edges", "edge_index"]
         n_nodes: int = int(Z.shape[0])
 
-        scalar_features, tensor_features, edge_angular, edge_cutoff = self.embedding(
+        scalar, tensor, edge_angular, edge_cutoff = self.embedding(
             Z=Z,
             bond_dist=bond_dist,
             bond_diff=bond_diff,
             edge_index=edge_index,
         )
-        # Allegro SI: every latent embedding is multiplied by u(r_ij) so that
-        # features (and their derivatives) vanish smoothly at r_cut. Without
-        # this, bias/type-embed paths leak non-zero activations past the
-        # cutoff and blow up on deep (≥3-layer) stacks.
-        u = edge_cutoff.unsqueeze(-1)
 
-        per_layer_scalars: list[torch.Tensor] = []
+        per_layer: list[torch.Tensor] = []
         for layer in self.layers:
-            scalar_features, tensor_features = layer(
-                scalar_features=scalar_features,
-                tensor_features=tensor_features,
+            scalar, tensor = layer(
+                scalar_features=scalar,
+                tensor_features=tensor,
                 edge_angular=edge_angular,
+                edge_cutoff=edge_cutoff,
                 edge_index=edge_index,
                 n_nodes=n_nodes,
             )
-            per_layer_scalars.append(scalar_features * u)
+            per_layer.append(scalar)
 
-        td["edges", "edge_features"] = torch.stack(per_layer_scalars, dim=1)
+        td["edges", "edge_features"] = torch.stack(per_layer, dim=1)
         return td

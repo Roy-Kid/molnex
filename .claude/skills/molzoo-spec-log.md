@@ -64,7 +64,7 @@ Print a clearly-marked block:
   - working tree was dirty at commit time     (only if dirty=1)
   - perf delta: fwd <P%>, bwd <Q%>            (only if available)
 
-Open an investigation with molnex-scientist? [y/N]
+Open an investigation with molzoo-auditor? [y/N]
 ```
 
 On `y`:
@@ -72,15 +72,15 @@ On `y`:
 2. Append a stub heading to `<encoder>_walkthrough.md` under the `## Run-linked investigations` section:
    ```markdown
    ### run-<N>-<topic>
-   _Stubbed by `/molzoo-spec-log`. To be filled by `molnex-scientist`._
+   _Stubbed by `/molzoo-spec-log`. To be filled by `molzoo-auditor`._
    - Trigger: run_id=<N>, val_mae=<v>, prev val_mae=<p>, delta=<d%>
    - Commit: <sha> (dirty=<0/1>)
    - Question: _TBD_
    ```
 3. Backfill the CSV row: replace the just-appended row's `note_ref` with `#run-<N>-<topic>`. Do this with a targeted `sed` or by reading the full file and rewriting only that one line via `Edit` — never disturb other rows. Verify byte-level that every row other than the last is unchanged.
-4. Delegate to the `molnex-scientist` agent with a prompt that includes: the triggering run_id, the stub slug, and the CSV row values. Run the agent in the foreground so the user can see the verdict.
+4. Delegate to the `molzoo-auditor` agent with a prompt that includes: the triggering run_id, the stub slug, and the CSV row values. Run the agent in the foreground so the user can see the verdict.
 
-On `N` (the default): print a one-liner "Skipped investigation. You can open one later with `molnex-scientist`." Do **not** touch the walkthrough.
+On `N` (the default): print a one-liner "Skipped investigation. You can open one later with `molzoo-auditor`." Do **not** touch the walkthrough.
 
 ### Case B — Clean progress
 

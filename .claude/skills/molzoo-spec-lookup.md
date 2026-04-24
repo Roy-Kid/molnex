@@ -1,6 +1,6 @@
 ---
 name: molzoo-spec-lookup
-description: Surface paper/equation/notation details from a molzoo encoder's spec + walkthrough + recent experiments when debugging or answering a conceptual question. Reads only — does not edit. Refuses to fabricate content when the topic is not covered; suggests molnex-scientist instead.
+description: Surface paper/equation/notation details from a molzoo encoder's spec + walkthrough + recent experiments when debugging or answering a conceptual question. Reads only — does not edit. Refuses to fabricate content when the topic is not covered; suggests molzoo-auditor instead.
 ---
 
 # molzoo-spec-lookup
@@ -76,7 +76,7 @@ If Steps 2–3 produce **zero matches across all three artifacts**, do not try t
 No coverage of "<topic>" in src/molzoo/specs/<encoder>.md, its walkthrough, or recent experiments.
 
 Options:
-  1. Invoke `molnex-scientist` to research the paper and extend the walkthrough.
+  1. Invoke `molzoo-auditor` to research the paper and extend the walkthrough.
   2. Rephrase the topic with different keywords (the matcher is keyword-based).
 ```
 
@@ -87,11 +87,11 @@ Options:
 After presenting matches, add a one-line footer:
 
 ```
-Read 3 artifact(s). To deepen or correct the walkthrough on this topic, invoke `molnex-scientist`.
+Read 3 artifact(s). To deepen or correct the walkthrough on this topic, invoke `molzoo-auditor`.
 ```
 
 ## Non-goals
 
 - Do NOT edit any file.
 - Do NOT read the encoder's Python source (`src/molzoo/<encoder>.py`) unless a matched section explicitly references a line range and the user asks a follow-up. This skill's job is artifact retrieval.
-- Do NOT call `WebFetch` on the paper. If the spec is incomplete on the topic, that is the signal to invoke `molnex-scientist`, not a reason to browse arXiv inside this skill.
+- Do NOT call `WebFetch` on the paper. If the spec is incomplete on the topic, that is the signal to invoke `molzoo-auditor`, not a reason to browse arXiv inside this skill.
