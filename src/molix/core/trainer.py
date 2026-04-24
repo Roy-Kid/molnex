@@ -16,7 +16,7 @@ from molix.config import config
 from molix.config import set_precision as _set_precision_global
 from molix.core.checkpoint import Checkpoint, CheckpointBackend, TorchSaveBackend
 from molix.core.hooks import Hook
-from molix.core.state import Stage, TrainState
+from molix.core.state import Stage, TrainState, resolve
 from molix.core.steps import DefaultEvalStep, DefaultTrainStep, Step
 from molix.data.datamodule import DataModuleProtocol
 
@@ -296,6 +296,16 @@ class Trainer:
 
         self._log_setup_banner(datamodule, max_epochs, max_steps)
 
+        # AMP without grad clip → occasional outlier-gradient metric spikes.
+        if config["use_amp"]:
+            from molix.core.hooks import GradClipHook as _GradClipHook
+
+            if not any(isinstance(h, _GradClipHook) for h in self.hooks):
+                logger.warning(
+                    "AMP is enabled but no GradClipHook is registered. "
+                    "Consider adding GradClipHook(max_norm=1.0) to hooks."
+                )
+
         self._call_hooks("on_train_start", self, self.state)
 
         epoch = self.state.epoch
@@ -337,20 +347,17 @@ class Trainer:
                 ):
                     self._run_eval_phase(datamodule)
                     self.state.steps_since_last_eval = 0
-                    self._call_hooks("on_eval_step_complete", self, self.state)
 
                 if self.state.global_step >= step_limit:
                     step_limit_reached = True
                     break
 
-            # Validation phase
-            self.state.set_stage(Stage.EVAL)
-            self.model.eval()
-
-            for batch in datamodule.val_dataloader():
-                self._call_hooks("on_eval_batch_start", self, self.state, batch)
-                outputs = self.eval_step.on_eval_batch(self, self.state, batch)
-                self._call_hooks("on_eval_batch_end", self, self.state, batch, outputs)
+            # Epoch-end validation. Skip if step-based eval just ran on the
+            # final batch (steps_since_last_eval == 0) so we don't do the
+            # val pass twice when eval_every_n_steps lines up with epoch end.
+            if self.state.steps_since_last_eval != 0:
+                self._run_eval_phase(datamodule)
+                self.state.steps_since_last_eval = 0
 
             # ReduceLROnPlateau is metric-driven and only advances at epoch
             # boundaries. Pull the metric the Checkpoint aggregate is tracking
@@ -360,7 +367,7 @@ class Trainer:
                 self.lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau
             ):
                 metric_name = self._checkpoint.best_metric_name
-                metric = self.state.get(metric_name)
+                metric = resolve(self.state, metric_name)
                 if metric is not None:
                     self.lr_scheduler.step(float(metric))
 
@@ -538,7 +545,13 @@ class Trainer:
             logger.info(line)
 
     def _run_eval_phase(self, datamodule: DataModuleProtocol) -> None:
-        """Run evaluation phase (internal helper)."""
+        """Run evaluation phase and fire ``on_eval_step_complete``.
+
+        Used by both step-based eval (inside the train loop) and the
+        epoch-end val pass, so eval-publishing hooks (MetricsHook,
+        TensorBoardHook) fire exactly once per eval phase regardless
+        of which trigger caused it.
+        """
         prev_stage = self.state.stage
         self.state.set_stage(Stage.EVAL)
         self.model.eval()
@@ -547,6 +560,8 @@ class Trainer:
             self._call_hooks("on_eval_batch_start", self, self.state, batch)
             outputs = self.eval_step.on_eval_batch(self, self.state, batch)
             self._call_hooks("on_eval_batch_end", self, self.state, batch, outputs)
+
+        self._call_hooks("on_eval_step_complete", self, self.state)
 
         self.model.train()
         self.state.set_stage(prev_stage)

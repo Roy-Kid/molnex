@@ -4,11 +4,16 @@ Pair-level equivariant encoder using iterated tensor products with neighbourhood
 aggregation. Returns per-layer per-edge scalar features only — readout, energy
 aggregation, and any rescaling live in :mod:`molpot.heads`.
 
-This module is a **redesign** (2026-04): it matches the paper's residual update
-exactly (``u(r_ij)`` gates the MLP update inside every layer), drops the
-post-layer-loop cutoff hack, drops the extra post-TP tensor-track rescaling,
-and removes the spurious trailing SiLU on the scalar MLP. See
-``src/molzoo/specs/allegro.md`` for the full math.
+Cutoff handling follows the paper + common practice: (a) the polynomial
+``u(r_ij)`` weights each edge inside the neighbour aggregation so
+out-of-cutoff neighbours drop out cleanly; (b) ``u(r_ij)`` gates every
+layer's MLP update so scalar growth is smooth near the cutoff; and
+(c) a final ``u(r_ij)`` multiplier on the encoder output forces the
+edge feature to zero at ``r = r_cut`` (needed for energy and force
+continuity — without it the α-residual leaves an ``a^L · scalar_0``
+floor on out-of-cutoff edges).
+
+See ``src/molzoo/specs/allegro.md`` for the full math.
 
 Reference:
     Musaelian et al. "Learning Local Equivariant Representations for
@@ -18,6 +23,7 @@ Reference:
 
 from __future__ import annotations
 
+import itertools
 import math
 
 import cuequivariance as cue
@@ -37,79 +43,148 @@ from molrep.interaction.tensor_product import irreps_from_l_max, sh_irreps_from_
 
 
 # ===========================================================================
+# Model-specific descriptor (per-channel Allegro TP, "u,iu,ju,ku+ijk")
+# ===========================================================================
+
+
+def allegro_uuu_descriptor(
+    irreps_in: cue.Irreps,
+    irreps_sh: cue.Irreps,
+) -> cue.EquivariantPolynomial:
+    r"""Per-channel Allegro tensor product descriptor.
+
+    Subscripts: ``weights[u], lhs[iu], rhs[ju], output[ku]``.
+
+    This is the descriptor used by the reference MIR Allegro ``Contracter``
+    kernel:
+
+    .. math::
+       \text{out}_{k,u} = \sum_{i,j} \mathrm{CG}_{i,j,k}\, w_u\, V_{i,u}\, v_{j,u}
+
+    Unlike :func:`cue.descriptors.channelwise_tensor_product` (subscripts
+    ``"uv,iu,jv,kuv+ijk"``), here both input operands share the **same**
+    channel dimension ``u``, and there is one scalar weight per channel per
+    CG path. This keeps the output multiplicity at ``u`` (no ``u*v``
+    blowup) while preserving per-channel, per-path mixing — what Allegro
+    requires.
+
+    Args:
+        irreps_in: Irreps of the lhs and output (they share multiplicity
+            ``u``). Typically ``num_tensor * (0e + 1o + 2e + ...)``. Must
+            have uniform mul.
+        irreps_sh: Irreps of the spherical harmonics. The caller is
+            responsible for broadcasting the single-channel ``Y_ij`` to
+            ``u`` channels before passing to the executing module.
+
+    Returns:
+        :class:`cue.EquivariantPolynomial` with inputs
+        ``(weights, lhs, rhs)`` and one output.
+    """
+    if len(set(irreps_in.muls)) != 1:
+        raise ValueError(
+            "allegro_uuu_descriptor requires irreps_in to have uniform "
+            f"multiplicity (got muls={irreps_in.muls})"
+        )
+    u = irreps_in.muls[0]
+    G = irreps_in.irrep_class
+    d = cue.SegmentedTensorProduct.from_subscripts("u,iu,ju,ku+ijk")
+
+    for _mul, ir in irreps_in:
+        d.add_segment(1, (ir.dim, u))
+    for _mul, ir in irreps_sh:
+        d.add_segment(2, (ir.dim, u))
+
+    irreps_out_list: list[tuple[int, cue.Irrep]] = []
+    for (i1, (_m1, ir1)), (i2, (_m2, ir2)) in itertools.product(
+        enumerate(irreps_in), enumerate(irreps_sh)
+    ):
+        for ir3 in ir1 * ir2:
+            for cg in G.clebsch_gordan(ir1, ir2, ir3):
+                d.add_path(None, i1, i2, None, c=cg, dims={"u": u})
+                irreps_out_list.append((u, ir3))
+
+    irreps_out = cue.Irreps(G, irreps_out_list)
+    irreps_out, _perm, inv = irreps_out.sort()
+    d = d.permute_segments(3, inv)
+    d = d.normalize_paths_for_operand(-1)
+
+    return cue.EquivariantPolynomial(
+        [
+            cue.IrrepsAndLayout(
+                irreps_in.new_scalars(d.operands[0].size), cue.ir_mul
+            ),
+            cue.IrrepsAndLayout(irreps_in, cue.ir_mul),
+            cue.IrrepsAndLayout(
+                cue.Irreps(G, [(u, ir) for _, ir in irreps_sh]), cue.ir_mul
+            ),
+        ],
+        [cue.IrrepsAndLayout(irreps_out, cue.ir_mul)],
+        cue.SegmentedPolynomial.eval_last_operand(d),
+    )
+
+
+# ===========================================================================
 # Helpers — pure functions on ir_mul-layout tensors
 # ===========================================================================
+#
+# Both helpers assume **uniform multiplicity** across all irreps (the Allegro
+# convention: ``u`` channels per l). Under that constraint an ir_mul-layout
+# tensor of ``sum_l (2l+1) * u`` flat dims can be reshaped as
+# ``(batch, sh_dim, u)`` — the u (channel) axis stays contiguous and the
+# sh_dim (m-component) axis aggregates all l blocks in order. That lets us
+# replace a per-l Python loop with a single reshape + broadcast.
 
 
 def _env_weight_harmonics(
     edge_angular: torch.Tensor,
     env_weights: torch.Tensor,
-    l_max: int,
     num_tensor_features: int,
-    irreps_dim: int,
 ) -> torch.Tensor:
     """Weight spherical harmonics by per-channel environment weights.
 
-    For each angular momentum ``l``, outer-products the ``(2l+1)`` spherical
-    harmonic components with the ``num_tensor_features`` channel weights in
-    ``ir_mul`` layout.
+    Computes
+    ``result[e, m, c] = edge_angular[e, m] * env_weights[e, c]`` and lays it
+    out in ``ir_mul`` order (m-major, channel-fast) — a single outer-product
+    + reshape, with no per-l loop.
 
     Args:
-        edge_angular: Spherical harmonics ``(n_edges, sh_dim)``.
+        edge_angular: Spherical harmonics ``(n_edges, sh_dim)`` (mul=1).
         env_weights: Per-channel weights ``(n_edges, num_tensor_features)``.
-        l_max: Maximum angular momentum.
-        num_tensor_features: Number of tensor feature channels.
-        irreps_dim: Total dimension of the ir_mul tensor representation.
+        num_tensor_features: Number of tensor feature channels (the uniform
+            multiplicity ``u`` used throughout the layer).
 
     Returns:
-        Weighted tensor features ``(n_edges, irreps_dim)`` in ir_mul layout.
+        Weighted tensor features ``(n_edges, sh_dim * num_tensor_features)``
+        in ir_mul layout.
     """
-    out = torch.zeros(
-        edge_angular.shape[0],
-        irreps_dim,
-        dtype=edge_angular.dtype,
-        device=edge_angular.device,
+    n_edges, sh_dim = edge_angular.shape
+    return (edge_angular.unsqueeze(-1) * env_weights.unsqueeze(-2)).reshape(
+        n_edges, sh_dim * num_tensor_features
     )
-    off_sh = 0
-    off_tp = 0
-    for l in range(l_max + 1):
-        deg = 2 * l + 1
-        ylm = edge_angular[:, off_sh : off_sh + deg]
-        block = (ylm.unsqueeze(-1) * env_weights.unsqueeze(-2)).reshape(
-            ylm.shape[0], -1
-        )
-        out[:, off_tp : off_tp + deg * num_tensor_features] = block
-        off_sh += deg
-        off_tp += deg * num_tensor_features
-    return out
 
 
 def _scale_by_channel(
     tensor: torch.Tensor,
     scale: torch.Tensor,
-    l_max: int,
     num_tensor_features: int,
 ) -> torch.Tensor:
     """Scale an ir_mul tensor feature by per-channel scalar weights.
 
     Args:
-        tensor: Equivariant tensor in ir_mul layout ``(n_edges, irreps_dim)``.
+        tensor: Equivariant tensor in ir_mul layout
+            ``(n_edges, sh_dim * num_tensor_features)``. ``sh_dim`` is the
+            total number of m-components across all l.
         scale: Per-channel scale factors ``(n_edges, num_tensor_features)``.
-        l_max: Maximum angular momentum.
-        num_tensor_features: Number of tensor feature channels.
+        num_tensor_features: Uniform channel multiplicity ``u``.
 
     Returns:
-        Scaled tensor ``(n_edges, irreps_dim)`` in ir_mul layout.
+        Scaled tensor with the same shape as ``tensor``.
     """
-    out = torch.empty_like(tensor)
-    offset = 0
-    for l in range(l_max + 1):
-        deg = 2 * l + 1
-        bsz = deg * num_tensor_features
-        block = tensor[:, offset : offset + bsz].reshape(-1, deg, num_tensor_features)
-        out[:, offset : offset + bsz] = (block * scale.unsqueeze(-2)).reshape(-1, bsz)
-        offset += bsz
-    return out
+    n_edges, flat_dim = tensor.shape
+    sh_dim = flat_dim // num_tensor_features
+    return (
+        tensor.view(n_edges, sh_dim, num_tensor_features) * scale.unsqueeze(1)
+    ).reshape(n_edges, flat_dim)
 
 
 def _make_scalar_mlp(
@@ -254,11 +329,7 @@ class PairEmbedding(nn.Module):
 
         env_weights = self.tensor_env(scalar_features)
         tensor_features = _env_weight_harmonics(
-            edge_angular,
-            env_weights,
-            self.l_max,
-            self.num_tensor_features,
-            self.irreps_dim,
+            edge_angular, env_weights, self.num_tensor_features
         )
 
         return scalar_features, tensor_features, edge_angular, edge_cutoff
@@ -272,23 +343,28 @@ class PairEmbedding(nn.Module):
 class AllegroLayer(nn.Module):
     """Pair-level tensor product layer with cutoff-gated residual update.
 
-    Flow, for each edge ``(i, j)``:
+    Flow, for each edge ``(i, j)``, given a pre-aggregated neighbourhood
+    ``edge_node_Y_ij = Y_i[source(ij)]`` supplied by the encoder:
 
     1. ``env_w_ij = Linear(scalar_ij)`` → per-channel env weight ``(E, u)``.
     2. ``V_scaled_ij = env_w_ij · V_ij`` (channel-wise scale).
-    3. Aggregate single-channel neighbourhood ``Y_i = Σ_{k∈N(i)} Y_ik``,
-       normalized by ``1/√avg_num_neighbors`` (paper SI) with per-sample
-       ``1/√|N(i)|`` fallback if the dataset constant is not supplied.
-    4. ``new_tensor_ij = Linear(TP(V_scaled_ij, Y_i))``   (paper eq. 21).
-    5. ``invariants_ij = new_tensor_ij[:, :u]``           (L=0 scalars).
-    6. ``mlp_out_ij = u(r_ij) · LatentMLP([scalar_ij, invariants_ij])``
+    3. ``new_tensor_ij = Linear(TP(V_scaled_ij, edge_node_Y_ij))``  (paper eq. 21).
+    4. ``invariants_ij = new_tensor_ij[:, :u]``           (L=0 scalars).
+    5. ``mlp_out_ij = u(r_ij) · LatentMLP([scalar_ij, invariants_ij])``
        — **the cutoff gate is applied per-layer on the MLP output, matching
        ``mir-group/allegro::_allegro.py:494``**.
-    7. ``scalar_ij ← a · scalar_ij + b · mlp_out_ij`` with
+    6. ``scalar_ij ← a · scalar_ij + b · mlp_out_ij`` with
        ``a = 1/√(1+α²), b = α/√(1+α²)``  (paper SI α-residual, α=0.5).
-    8. ``V_ij ← new_tensor_ij``  (no post-TP rescale — matches paper).
+    7. ``V_ij ← new_tensor_ij``  (no post-TP rescale — matches paper).
 
-    The single-channel right operand in step 4 lets us use the fast
+    The neighbour aggregation ``Y_i = Σ_{k∈N(i)} Y_ik`` and its
+    ``1/√avg_num_neighbors`` normalisation are layer-invariant (they depend
+    only on connectivity and the spherical harmonics, both fixed across the
+    layer stack). The encoder computes them once and gathers them per-edge
+    via ``Y_i[source(ij)]`` before the layer loop — saving ``(L-1)``
+    scatter_adds per forward.
+
+    The single-channel right operand in step 3 lets us use the fast
     ``ChannelWiseTensorProduct`` kernel; see ``specs/allegro.md §7`` for why
     the bilinearity of the CG tensor product makes this physically equivalent
     to the paper's per-channel-weighted formulation.
@@ -300,7 +376,6 @@ class AllegroLayer(nn.Module):
         latent_mlp_hiddens: Hidden dims of the latent MLP.
         latent_activation: Activation class for the latent MLP; pass ``None``
             for a pure linear stack (3BPA setup).
-        avg_num_neighbors: Dataset-wide ⟨|N(i)|⟩. ``None`` → per-sample fallback.
         residual_alpha: Residual mixing weight α (paper default 0.5).
     """
 
@@ -312,7 +387,6 @@ class AllegroLayer(nn.Module):
         l_max: int = 2,
         latent_mlp_hiddens: list[int] | None = None,
         latent_activation: type[nn.Module] | None = nn.SiLU,
-        avg_num_neighbors: float | None = None,
         residual_alpha: float = 0.5,
     ):
         super().__init__()
@@ -320,9 +394,6 @@ class AllegroLayer(nn.Module):
         self.num_scalar_features = num_scalar_features
         self.num_tensor_features = num_tensor_features
         self.l_max = l_max
-        self.avg_num_neighbors = (
-            float(avg_num_neighbors) if avg_num_neighbors is not None else None
-        )
 
         irreps_str = irreps_from_l_max(l_max, num_tensor_features)
         sh_irreps_str = sh_irreps_from_l_max(l_max)
@@ -366,90 +437,56 @@ class AllegroLayer(nn.Module):
 
         with cue.assume(O3):
             self.irreps_dim = Irreps(irreps_str).dim
-            self._sh_dim = Irreps(sh_irreps_str).dim
 
     def forward(
         self,
         scalar_features: torch.Tensor,
         tensor_features: torch.Tensor,
-        edge_angular: torch.Tensor,
+        edge_node_Y: torch.Tensor,
         edge_cutoff: torch.Tensor,
-        edge_index: torch.Tensor,
-        n_nodes: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Apply one Allegro layer.
 
         Args:
             scalar_features: ``(n_edges, F_s)`` current scalar track.
             tensor_features: ``(n_edges, irreps_dim)`` current tensor track.
-            edge_angular: ``(n_edges, sh_dim)`` spherical harmonics from the
-                embedding (reused across layers).
+            edge_node_Y: ``(n_edges, sh_dim)`` pre-aggregated neighbourhood
+                spherical harmonics gathered per-edge from the source node
+                (computed once by the encoder; see :class:`Allegro.forward`).
             edge_cutoff: ``(n_edges,)`` polynomial-cutoff factor ``u(r_ij)``.
-            edge_index: ``(n_edges, 2)`` with ``[:,0]=source``.
-            n_nodes: Number of nodes in the batch.
 
         Returns:
             ``(scalar_out, tensor_out)`` with the same shapes as the inputs.
-            ``scalar_out`` decays smoothly to ``a · scalar_in`` as
-            ``r → r_cut`` because the MLP update is gated by ``u(r_ij)``.
+            The per-layer MLP update is gated by ``u(r_ij)`` so scalar
+            growth is smooth; the encoder additionally multiplies the
+            final scalar by ``u(r_ij)`` so out-of-cutoff edges produce
+            literal zero features.
         """
-        src = edge_index[:, 0]
-
         # (1-2) Pre-scale V by env weights.
         env_w = self.env_embed(scalar_features)                       # (E, u)
         scaled_V = _scale_by_channel(
-            tensor_features, env_w, self.l_max, self.num_tensor_features
+            tensor_features, env_w, self.num_tensor_features
         )                                                             # (E, irreps)
 
-        # (3) Neighbour aggregation of spherical harmonics (single channel).
-        node_Y = torch.zeros(
-            n_nodes,
-            self._sh_dim,
-            dtype=tensor_features.dtype,
-            device=tensor_features.device,
-        )
-        node_Y.scatter_add_(
-            0, src.unsqueeze(-1).expand_as(edge_angular), edge_angular
-        )
-        if self.avg_num_neighbors is not None:
-            node_Y = node_Y / math.sqrt(self.avg_num_neighbors)
-        else:
-            src_count = torch.zeros(
-                n_nodes,
-                dtype=tensor_features.dtype,
-                device=tensor_features.device,
-            )
-            src_count.scatter_add_(
-                0,
-                src,
-                torch.ones(
-                    src.shape[0],
-                    dtype=tensor_features.dtype,
-                    device=tensor_features.device,
-                ),
-            )
-            node_Y = node_Y / src_count.clamp(min=1.0).sqrt().unsqueeze(-1)
-        edge_node_Y = node_Y[src]                                     # (E, sh_dim)
-
-        # (4) Tensor product → project back to input irreps.
+        # (3) Tensor product → project back to input irreps.
         tp_out = self.tp(scaled_V, edge_node_Y)
         new_tensor = self.tp_linear(tp_out)                           # (E, irreps)
 
-        # (5) Extract L=0 invariants.
+        # (4) Extract L=0 invariants.
         invariants = new_tensor[:, : self.num_tensor_features]        # (E, u)
 
-        # (6) Cutoff-gated latent MLP update.
+        # (5) Cutoff-gated latent MLP update.
         mlp_out = self.latent_mlp(
             torch.cat([scalar_features, invariants], dim=-1)
         )                                                             # (E, F_s)
         mlp_out = mlp_out * edge_cutoff.unsqueeze(-1)
 
-        # (7) α-residual.
+        # (6) α-residual.
         updated_scalars = (
             self.residual_a * scalar_features + self.residual_b * mlp_out
         )
 
-        # (8) No post-TP tensor rescale — paper-faithful.
+        # (7) No post-TP tensor rescale — paper-faithful.
         return updated_scalars, new_tensor
 
 
@@ -481,12 +518,20 @@ class Allegro(TensorDictModuleBase):
     """Allegro equivariant edge encoder.
 
     Reads ``(atoms.Z, edges.edge_index, edges.bond_diff, edges.bond_dist)``
-    from a :class:`~molix.data.types.GraphBatch` and writes
-    ``edges.edge_features`` of shape ``(n_edges, num_layers, num_scalar)``.
+    from a :class:`~molix.data.types.GraphBatch` and writes the final layer's
+    per-edge scalar track to ``edges.edge_features`` with shape
+    ``(n_edges, num_scalar_features)``.
 
-    The stored per-layer scalars are already cutoff-gated (the gate is applied
-    inside each :class:`AllegroLayer` on the MLP update), so downstream heads
-    can consume them directly without re-multiplying by ``u(r_ij)``.
+    The output scalar is cutoff-gated at two points: every :class:`AllegroLayer`
+    multiplies its MLP update by ``u(r_ij)`` (smooth residual growth), and the
+    encoder multiplies the final scalar by ``u(r_ij)`` one more time so
+    out-of-cutoff edges produce zero output — downstream heads can consume it
+    directly without re-multiplying by ``u(r_ij)``.
+
+    Only the last layer is stored: intermediate layers are transient updates to
+    the same ``(E, F)`` tensor and the paper's ``edge_eng`` readout consumes
+    only the final scalar. Stacking every layer would allocate ``num_layers ×``
+    memory for outputs that are immediately discarded.
 
     Reference:
         Musaelian et al. "Learning Local Equivariant Representations for
@@ -547,6 +592,12 @@ class Allegro(TensorDictModuleBase):
             poly_p=poly_p,
         )
 
+        self.avg_num_neighbors = (
+            float(avg_num_neighbors) if avg_num_neighbors is not None else None
+        )
+        with cue.assume(O3):
+            self._sh_dim = Irreps(sh_irreps_from_l_max(l_max)).dim
+
         self.layers = nn.ModuleList(
             [
                 AllegroLayer(
@@ -555,7 +606,6 @@ class Allegro(TensorDictModuleBase):
                     l_max=l_max,
                     latent_mlp_hiddens=latent_mlp_hiddens,
                     latent_activation=latent_activation,
-                    avg_num_neighbors=avg_num_neighbors,
                     residual_alpha=residual_alpha,
                 )
                 for _ in range(num_layers)
@@ -570,7 +620,8 @@ class Allegro(TensorDictModuleBase):
 
         Returns:
             The same ``GraphBatch`` with ``edges.edge_features`` of shape
-            ``(n_edges, num_layers, num_scalar_features)``.
+            ``(n_edges, num_scalar_features)`` — the final layer's scalar
+            track.
         """
         Z = td["atoms", "Z"]
         bond_dist = td["edges", "bond_dist"]
@@ -585,17 +636,47 @@ class Allegro(TensorDictModuleBase):
             edge_index=edge_index,
         )
 
-        per_layer: list[torch.Tensor] = []
+        # Neighbour aggregation Y_i = Σ_{k∈N(i)} u(r_ik) Y_ik. The cutoff
+        # factor u(r_ik) inside the sum is what makes out-of-cutoff edges
+        # drop out — without it, a neighbour past r_max still contributes
+        # its Y to node_Y[i] and contaminates i's in-cutoff edges.
+        # edge_angular and edge_index are fixed across the layer stack, so
+        # we aggregate once here and gather per-edge; the same math happens
+        # inside every layer in the naive reference.
+        src = edge_index[:, 0]
+        weighted_Y = edge_angular * edge_cutoff.unsqueeze(-1)
+        node_Y = torch.zeros(
+            n_nodes,
+            self._sh_dim,
+            dtype=edge_angular.dtype,
+            device=edge_angular.device,
+        )
+        node_Y.scatter_add_(
+            0, src.unsqueeze(-1).expand_as(weighted_Y), weighted_Y
+        )
+        if self.avg_num_neighbors is not None:
+            node_Y = node_Y / math.sqrt(self.avg_num_neighbors)
+        else:
+            # Normalise by cutoff-weighted count so the denominator reflects
+            # the same "effective neighbour mass" that the numerator carries.
+            src_count = torch.zeros(
+                n_nodes, dtype=edge_angular.dtype, device=edge_angular.device
+            )
+            src_count.scatter_add_(0, src, edge_cutoff)
+            node_Y = node_Y / src_count.clamp(min=1.0).sqrt().unsqueeze(-1)
+        edge_node_Y = node_Y[src]                                     # (E, sh_dim)
+
         for layer in self.layers:
             scalar, tensor = layer(
                 scalar_features=scalar,
                 tensor_features=tensor,
-                edge_angular=edge_angular,
+                edge_node_Y=edge_node_Y,
                 edge_cutoff=edge_cutoff,
-                edge_index=edge_index,
-                n_nodes=n_nodes,
             )
-            per_layer.append(scalar)
 
-        td["edges", "edge_features"] = torch.stack(per_layer, dim=1)
+        # Gate the final output by u(r_ij) so the energy/force surface is
+        # continuous at r_cut: the layer's α-residual would otherwise leave
+        # an ``a^L · scalar_0`` floor on out-of-cutoff edges, breaking
+        # energy conservation near the cutoff.
+        td["edges", "edge_features"] = scalar * edge_cutoff.unsqueeze(-1)
         return td

@@ -90,7 +90,7 @@ def test_grad_clip_hook_clips_gradients():
     state = trainer.train(datamodule, max_epochs=1)
 
     # grad_norm should have been written to state
-    assert "train/grad_norm" in state
+    assert "grad_norm" in state["train"]
 
 
 def test_grad_clip_hook_respects_max_norm():
@@ -144,8 +144,8 @@ def test_grad_clip_hook_writes_state():
     # Manually run one training step to trigger on_after_backward
     trainer.train_step.on_train_batch(trainer, state, batch)
 
-    assert "train/grad_norm" in state
-    assert isinstance(state["train/grad_norm"], float)
+    assert "grad_norm" in state["train"]
+    assert isinstance(state["train"]["grad_norm"], float)
 
 
 def test_grad_clip_hook_with_amp():
@@ -165,7 +165,7 @@ def test_grad_clip_hook_with_amp():
     datamodule = MockDataModule()
     state = trainer.train(datamodule, max_epochs=1)
 
-    assert "train/grad_norm" in state
+    assert "grad_norm" in state["train"]
     assert state.global_step == 3
 
 
@@ -307,4 +307,4 @@ def test_all_three_features_together():
 
     assert state.epoch == 1
     assert state.global_step == 3
-    assert "train/grad_norm" in state
+    assert "grad_norm" in state["train"]

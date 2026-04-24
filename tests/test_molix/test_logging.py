@@ -112,7 +112,11 @@ class TestPrettyTextFormatter:
         fmt = PrettyTextFormatter(col_width=10)
         rec = _make_record({"kind": "header", "columns": ["step", "loss"]})
         out = fmt.format(rec)
-        assert out == "      step       loss"
+        # Two-row layout: category row (empty here — no namespace prefix)
+        # over item row ("step" / "loss").
+        top, bot = out.split("\n")
+        assert top.split() == []           # no slash-prefix → empty category
+        assert bot.split() == ["step", "loss"]
 
     def test_row_renders_aligned_values(self):
         fmt = PrettyTextFormatter(col_width=10, row_fmt="{:>10.4g}")

@@ -45,7 +45,8 @@ class TestElementUpdate:
         update = ElementUpdate(hidden_dim=64, num_species=10)
         assert update.config.hidden_dim == 64
         assert update.config.num_species == 10
-        assert hasattr(update, 'linear')
+        assert hasattr(update, '_linear_indexed')
+        assert hasattr(update, '_linear_naive')
     
     def test_forward_shape(self):
         """Test output shape."""

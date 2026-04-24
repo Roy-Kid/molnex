@@ -138,9 +138,10 @@ class MAE(BaseMetric):
         self.reset()
 
     def update(self, preds: torch.Tensor, targets: torch.Tensor) -> None:
-        """Accumulate predictions and targets."""
-        self.preds.append(preds.detach().cpu())
-        self.targets.append(targets.detach().cpu())
+        """Accumulate predictions and targets (kept on the original device
+        — ``compute()``'s reduction + ``.item()`` is the single sync point)."""
+        self.preds.append(preds.detach())
+        self.targets.append(targets.detach())
 
     def compute(self) -> float:
         """Compute MAE from accumulated predictions and targets."""
@@ -175,9 +176,10 @@ class RMSE(BaseMetric):
         self.reset()
 
     def update(self, preds: torch.Tensor, targets: torch.Tensor) -> None:
-        """Accumulate predictions and targets."""
-        self.preds.append(preds.detach().cpu())
-        self.targets.append(targets.detach().cpu())
+        """Accumulate predictions and targets (kept on the original device
+        — ``compute()``'s reduction + ``.item()`` is the single sync point)."""
+        self.preds.append(preds.detach())
+        self.targets.append(targets.detach())
 
     def compute(self) -> float:
         """Compute RMSE from accumulated predictions and targets."""
@@ -212,9 +214,10 @@ class MSE(BaseMetric):
         self.reset()
 
     def update(self, preds: torch.Tensor, targets: torch.Tensor) -> None:
-        """Accumulate predictions and targets."""
-        self.preds.append(preds.detach().cpu())
-        self.targets.append(targets.detach().cpu())
+        """Accumulate predictions and targets (kept on the original device
+        — ``compute()``'s reduction + ``.item()`` is the single sync point)."""
+        self.preds.append(preds.detach())
+        self.targets.append(targets.detach())
 
     def compute(self) -> float:
         """Compute MSE from accumulated predictions and targets."""
@@ -251,9 +254,10 @@ class R2Score(BaseMetric):
         self.reset()
 
     def update(self, preds: torch.Tensor, targets: torch.Tensor) -> None:
-        """Accumulate predictions and targets."""
-        self.preds.append(preds.detach().cpu())
-        self.targets.append(targets.detach().cpu())
+        """Accumulate predictions and targets (kept on the original device
+        — ``compute()``'s reduction + ``.item()`` is the single sync point)."""
+        self.preds.append(preds.detach())
+        self.targets.append(targets.detach())
 
     def compute(self) -> float:
         """Compute R² from accumulated predictions and targets."""
@@ -300,9 +304,10 @@ class Accuracy(BaseMetric):
         self.reset()
 
     def update(self, preds: torch.Tensor, targets: torch.Tensor) -> None:
-        """Accumulate predictions and targets."""
-        self.preds.append(preds.detach().cpu())
-        self.targets.append(targets.detach().cpu())
+        """Accumulate predictions and targets (kept on the original device
+        — ``compute()``'s reduction + ``.item()`` is the single sync point)."""
+        self.preds.append(preds.detach())
+        self.targets.append(targets.detach())
 
     def compute(self) -> float:
         """Compute accuracy from accumulated predictions and targets."""

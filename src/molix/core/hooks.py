@@ -16,6 +16,7 @@ import torch.nn as nn
 
 from molix import logger as _logger_mod
 from molix import logging as _logging_mod
+from molix.core.state import Path, display, resolve
 
 if TYPE_CHECKING:
     from molix.core.state import TrainState
@@ -221,15 +222,17 @@ class BaseHook:
 class ScalarHook(BaseHook):
     """Hook that writes scalar values into ``state``.
 
-    Subclasses advertise the state keys they populate via ``scalar_keys``.
-    Container hooks such as :class:`Log` read this attribute to discover
-    which keys to render, avoiding hard-coded column lists.
+    Subclasses advertise the state paths they populate via ``scalar_keys``.
+    Each path is a :data:`~molix.core.state.Path` — either a top-level
+    string key (``"epoch"``) or a tuple path into a namespace sub-dict
+    (``("train", "loss")``). Container hooks such as :class:`Log` read
+    this attribute to discover which columns to render.
 
-    For hooks whose keys depend on runtime configuration (e.g. metric
+    For hooks whose paths depend on runtime configuration (e.g. metric
     names), override ``scalar_keys`` as a ``@property``.
     """
 
-    scalar_keys: tuple[str, ...] = ()
+    scalar_keys: tuple[Path, ...] = ()
 
 
 # Built-in Hooks
@@ -268,8 +271,8 @@ class TensorBoardHook(BaseHook):
         ```
     """
 
-    TRAIN_PREFIXES: tuple[str, ...] = ("train/", "performance/")
-    EVAL_PREFIXES: tuple[str, ...] = ("eval/",)
+    TRAIN_NAMESPACES: tuple[str, ...] = ("train", "performance", "gpu")
+    EVAL_NAMESPACES: tuple[str, ...] = ("eval",)
 
     def __init__(
         self,
@@ -304,23 +307,22 @@ class TensorBoardHook(BaseHook):
             logger.info(f"TensorBoardHook: logging hyperparameters {self.hparams}")
 
     def on_train_batch_end(self, trainer, state, batch, outputs):
-        """Log every ``train/*`` and ``performance/*`` scalar currently in state."""
+        """Log every ``train/*``, ``performance/*``, ``gpu/*`` scalar."""
         if state.global_step % self.every_n_steps != 0:
             return
-        self._log_prefixed(state, self.TRAIN_PREFIXES)
+        self._log_namespaces(state, self.TRAIN_NAMESPACES)
 
     def on_eval_step_complete(self, trainer, state):
-        """Log every ``eval/*`` scalar currently in state."""
-        self._log_prefixed(state, self.EVAL_PREFIXES)
+        """Log every ``eval/*`` scalar."""
+        self._log_namespaces(state, self.EVAL_NAMESPACES)
 
-    def _log_prefixed(self, state, prefixes: tuple[str, ...]) -> None:
-        for key, value in state.items():
-            if not key.startswith(prefixes):
-                continue
-            scalar = _as_scalar(value)
-            if scalar is None:
-                continue
-            self.writer.add_scalar(key, scalar, state.global_step)
+    def _log_namespaces(self, state, namespaces: tuple[str, ...]) -> None:
+        for ns in namespaces:
+            for k, value in state[ns].items():
+                scalar = _as_scalar(value)
+                if scalar is None:
+                    continue
+                self.writer.add_scalar(f"{ns}/{k}", scalar, state.global_step)
 
     def on_epoch_end(self, trainer, state):
         """Log weight/gradient histograms."""
@@ -386,8 +388,10 @@ class CheckpointHook(BaseHook):
             save (so a kill -9'd run still has a resumable snapshot).
         save_best: Track a scalar metric in :class:`TrainState` and write
             ``best.pt`` whenever it improves.
-        best_metric_name: Key in ``state`` to track for ``save_best``
-            (default ``"eval/loss"``).
+        best_metric_name: Path into ``state`` to track for ``save_best``.
+            A tuple ``("eval", "loss")`` walks into ``state["eval"]["loss"]``;
+            a bare string resolves at the top level. Default:
+            ``("eval", "loss")``.
         best_metric_mode: ``"min"`` (smaller = better) or ``"max"``.
         register_artifacts: Register each written checkpoint via
             ``trainer.ctx.save_artifact`` (if present).
@@ -398,7 +402,7 @@ class CheckpointHook(BaseHook):
             checkpoint_dir="./ckpt",
             save_every_n_epochs=5,
             save_best=True,
-            best_metric_name="eval/MAE",
+            best_metric_name=("eval", "MAE"),
             best_metric_mode="min",
         )
         trainer = Trainer(model=model, hooks=[hook])
@@ -414,7 +418,7 @@ class CheckpointHook(BaseHook):
         save_every_n_epochs: int = 1,
         save_last: bool = True,
         save_best: bool = False,
-        best_metric_name: str = "eval/loss",
+        best_metric_name: Path = ("eval", "loss"),
         best_metric_mode: str = "min",
         register_artifacts: bool = False,
     ):
@@ -478,9 +482,8 @@ class CheckpointHook(BaseHook):
         return candidate > self._best_value
 
     def _maybe_save_best(self, trainer, state):
-        try:
-            raw = state[self.best_metric_name]
-        except KeyError:
+        raw = resolve(state, self.best_metric_name)
+        if raw is None:
             return  # metric not populated yet
         value = float(raw)
         if not self._is_improvement(value):
@@ -633,32 +636,23 @@ class ProgressBarHook(BaseHook):
 
 
 class MetricsHook(ScalarHook):
-    """Track training and validation metrics.
+    """Track train and val metrics with phase isolation.
 
-    Integrates metrics into the training loop, automatically updating them
-    on each batch and computing final values at epoch end.
+    Invariants:
 
-    Supports both built-in metrics (from molix.core.metrics) and torchmetrics.
+    - ``train_metrics`` and ``val_metrics`` are independent deep copies of
+      the supplied metrics, so neither side can corrupt the other.
+    - Train metrics are per-batch (reset + update + compute each batch),
+      matching the per-batch semantics of ``train/loss``.
+    - Val metrics accumulate across a whole eval phase and are published
+      once in ``on_eval_step_complete``.
 
     Args:
-        metrics: List of metric instances
-        pred_key: Key or tuple of keys to extract predictions from outputs
-        target_key: Key or tuple of keys to extract targets from batch
-        prefix_train: Prefix for training metric names (default: "train")
-        prefix_val: Prefix for validation metric names (default: "eval")
-
-    Example:
-        ```python
-        from molix.core.hooks import MetricsHook
-        from molix.core.metrics import MAE, RMSE
-
-        hook = MetricsHook(
-            metrics=[MAE(), RMSE()],
-            pred_key=("pred", "scalar"),
-            target_key=("target", "U0"),
-        )
-        trainer = Trainer(model=model, hooks=[hook])
-        ```
+        metrics: Metric instances (torchmetrics-compatible). Deep-copied.
+        pred_key: Dotted path or tuple to extract predictions from outputs.
+        target_key: Dotted path or tuple to extract targets from batch.
+        prefix_train: State namespace for train metrics (default ``"train"``).
+        prefix_val: State namespace for val metrics (default ``"eval"``).
     """
 
     def __init__(
@@ -669,23 +663,21 @@ class MetricsHook(ScalarHook):
         prefix_train: str = "train",
         prefix_val: str = "eval",
     ):
-        self.metrics = metrics
+        import copy
+
+        # Deep-copy so train and val accumulators never share buffers.
+        self.train_metrics = [copy.deepcopy(m) for m in metrics]
+        self.val_metrics = [copy.deepcopy(m) for m in metrics]
         self.pred_key = pred_key if isinstance(pred_key, tuple) else (pred_key,)
         self.target_key = target_key if isinstance(target_key, tuple) else (target_key,)
         self.prefix_train = prefix_train
         self.prefix_val = prefix_val
 
-        # Separate storage for train and val metrics
-        self.train_preds: list[Any] = []
-        self.train_targets: list[Any] = []
-        self.val_preds: list[Any] = []
-        self.val_targets: list[Any] = []
-
     @property
-    def scalar_keys(self) -> tuple[str, ...]:
-        names = [m.__class__.__name__ for m in self.metrics]
+    def scalar_keys(self) -> tuple[Path, ...]:
+        names = [m.__class__.__name__ for m in self.train_metrics]
         return tuple(
-            f"{prefix}/{n}"
+            (prefix, n)
             for prefix in (self.prefix_train, self.prefix_val)
             for n in names
         )
@@ -705,51 +697,31 @@ class MetricsHook(ScalarHook):
         return value
 
     def on_epoch_start(self, trainer, state):
-        """Reset all metrics at epoch start."""
-        for metric in self.metrics:
+        # train_metrics reset per-batch in on_train_batch_end.
+        for metric in self.val_metrics:
             metric.reset()
-        self.train_preds = []
-        self.train_targets = []
-        self.val_preds = []
-        self.val_targets = []
 
     def on_train_batch_end(self, trainer, state, batch, outputs):
-        """Update metrics with training batch and write to state."""
         preds = self._extract_value(outputs, self.pred_key)
         targets = self._extract_value(batch, self.target_key)
 
-        for metric in self.metrics:
+        train_ns = state[self.prefix_train]
+        for metric in self.train_metrics:
+            metric.reset()
             metric.update(preds, targets)
-            # Write current metric value to state
-            value = metric.compute()
-            metric_name = metric.__class__.__name__
-            state[f"{self.prefix_train}/{metric_name}"] = value
+            train_ns[type(metric).__name__] = metric.compute()
 
     def on_eval_batch_end(self, trainer, state, batch, outputs):
-        """Update metrics with validation batch and write accumulated metrics to state."""
         preds = self._extract_value(outputs, self.pred_key)
         targets = self._extract_value(batch, self.target_key)
+        for metric in self.val_metrics:
+            metric.update(preds, targets)
 
-        # Store for accumulated validation metrics computation
-        self.val_preds.append(preds.detach().cpu())
-        self.val_targets.append(targets.detach().cpu())
-
-        # Compute accumulated eval metrics and write to state
-        import torch
-
-        if self.val_preds:
-            for metric in self.metrics:
-                metric.reset()
-                preds_cat = torch.cat(self.val_preds)
-                targets_cat = torch.cat(self.val_targets)
-                metric.update(preds_cat, targets_cat)
-                value = metric.compute()
-                metric_name = metric.__class__.__name__
-                # Write to state
-                state[f"{self.prefix_val}/{metric_name}"] = value
-
-    def on_epoch_end(self, trainer, state):
-        """No-op: metrics are written to state incrementally in on_eval_batch_end."""
+    def on_eval_step_complete(self, trainer, state):
+        val_ns = state[self.prefix_val]
+        for metric in self.val_metrics:
+            val_ns[type(metric).__name__] = metric.compute()
+            metric.reset()
 
 
 class StepSpeedHook(ScalarHook):
@@ -773,7 +745,7 @@ class StepSpeedHook(ScalarHook):
         ```
     """
 
-    scalar_keys = ("performance/step_per_second",)
+    scalar_keys = (("performance", "step_per_second"),)
 
     def __init__(self, window_size: int = 10):
         self.window_size = window_size
@@ -800,7 +772,7 @@ class StepSpeedHook(ScalarHook):
                 steps_per_sec = self._steps_in_window / elapsed
 
                 # Write to state
-                state["performance/step_per_second"] = steps_per_sec
+                state["performance"]["step_per_second"] = steps_per_sec
 
                 # Reset for next window
                 self._step_start_time = time.time()
@@ -1012,22 +984,22 @@ class GradClipHook(ScalarHook):
         ```
     """
 
-    scalar_keys = ("train/grad_norm",)
+    scalar_keys = (("train", "grad_norm"),)
 
     def __init__(self, max_norm: float, norm_type: float = 2.0):
         self.max_norm = max_norm
         self.norm_type = norm_type
 
     def on_after_backward(self, trainer, state):
-        """Clip gradients and record pre-clip norm."""
+        """Clip gradients in-place and record the pre-clip L2 norm."""
         import torch
 
-        grad_norm = torch.nn.utils.clip_grad_norm_(
+        total_norm = torch.nn.utils.clip_grad_norm_(
             trainer.model.parameters(),
             self.max_norm,
             norm_type=self.norm_type,
         )
-        state["train/grad_norm"] = grad_norm.item()
+        state["train"]["grad_norm"] = float(total_norm)
 
 
 class ActivationCheckpointingHook(BaseHook):
@@ -1109,7 +1081,11 @@ class GPUMemoryHook(ScalarHook):
     written (as ``0.0``) so headers stay aligned.
     """
 
-    scalar_keys = ("gpu/alloc_gib", "gpu/resv_gib", "gpu/peak_gib")
+    scalar_keys = (
+        ("gpu", "alloc_gib"),
+        ("gpu", "resv_gib"),
+        ("gpu", "peak_gib"),
+    )
 
     _GB = 1024 ** 3  # GiB, matches the ``_gib`` suffix on the keys
 
@@ -1122,15 +1098,16 @@ class GPUMemoryHook(ScalarHook):
     def on_train_batch_end(self, trainer, state, batch, outputs):
         import torch
 
+        gpu = state["gpu"]
         if torch.cuda.is_available():
-            state["gpu/alloc_gib"] = torch.cuda.memory_allocated() / self._GB
-            state["gpu/resv_gib"] = torch.cuda.memory_reserved() / self._GB
-            state["gpu/peak_gib"] = torch.cuda.max_memory_allocated() / self._GB
+            gpu["alloc_gib"] = torch.cuda.memory_allocated() / self._GB
+            gpu["resv_gib"] = torch.cuda.memory_reserved() / self._GB
+            gpu["peak_gib"] = torch.cuda.max_memory_allocated() / self._GB
             torch.cuda.reset_peak_memory_stats()
         else:
-            state["gpu/alloc_gib"] = 0.0
-            state["gpu/resv_gib"] = 0.0
-            state["gpu/peak_gib"] = 0.0
+            gpu["alloc_gib"] = 0.0
+            gpu["resv_gib"] = 0.0
+            gpu["peak_gib"] = 0.0
 
 
 class GPUUtilizationHook(ScalarHook):
@@ -1149,7 +1126,7 @@ class GPUUtilizationHook(ScalarHook):
     than silently reporting zeros.
     """
 
-    scalar_keys = ("gpu/util_pct", "gpu/mem_util_pct")
+    scalar_keys = (("gpu", "util_pct"), ("gpu", "mem_util_pct"))
 
     def on_train_start(self, trainer, state):
         import torch
@@ -1173,8 +1150,9 @@ class GPUUtilizationHook(ScalarHook):
 
     def on_train_batch_end(self, trainer, state, batch, outputs):
         rates = self._nvml.nvmlDeviceGetUtilizationRates(self._handle)
-        state["gpu/util_pct"] = float(rates.gpu)
-        state["gpu/mem_util_pct"] = float(rates.memory)
+        gpu = state["gpu"]
+        gpu["util_pct"] = float(rates.gpu)
+        gpu["mem_util_pct"] = float(rates.memory)
 
     def on_train_end(self, trainer, state):
         nvml = getattr(self, "_nvml", None)
@@ -1215,31 +1193,33 @@ def _as_scalar(value) -> float | int | None:
     return None
 
 
-def _collect_keys(items) -> list[str]:
-    """Flatten a mix of raw key strings and :class:`ScalarHook` instances.
+def _collect_keys(items) -> list[Path]:
+    """Flatten a mix of paths and :class:`ScalarHook` instances.
 
     Accepts::
 
-        keys=["train/loss", step_speed_hook, "gpu/peak_gib"]
+        keys=[("train", "loss"), step_speed_hook, ("gpu", "peak_gib")]
 
-    where any ``ScalarHook`` is expanded to its ``scalar_keys``. Duplicates
-    are preserved in order of first occurrence.
+    Each entry is either a :data:`~molix.core.state.Path` (bare string for
+    a top-level key, tuple for a nested one) or a :class:`ScalarHook`
+    instance whose ``scalar_keys`` are expanded. Duplicates are
+    preserved in order of first occurrence.
     """
-    seen: set[str] = set()
-    out: list[str] = []
+    seen: set[Path] = set()
+    out: list[Path] = []
     for item in items:
         if isinstance(item, ScalarHook):
-            names = tuple(item.scalar_keys)
-        elif isinstance(item, str):
-            names = (item,)
+            paths = tuple(item.scalar_keys)
+        elif isinstance(item, (str, tuple)):
+            paths = (item,)
         else:
             raise TypeError(
-                f"Log keys must be str or ScalarHook, got {type(item).__name__}"
+                f"Log keys must be str, tuple, or ScalarHook — got {type(item).__name__}"
             )
-        for n in names:
-            if n not in seen:
-                seen.add(n)
-                out.append(n)
+        for p in paths:
+            if p not in seen:
+                seen.add(p)
+                out.append(p)
     return out
 
 
@@ -1252,16 +1232,16 @@ class Log(BaseHook):
     trainer's top-level ``hooks=[...]`` list so they can be shared with
     other consumers (e.g. :class:`TensorBoardHook`).
 
-    Keys may be given either as plain state paths (``"train/loss"``) or as
-    :class:`ScalarHook` instances (the hook's ``scalar_keys`` are expanded).
-    Passing the hook itself keeps key names out of the call site and lets
-    the hook evolve its advertised keys independently.
+    Keys may be given as paths (tuples for nested scalars,
+    ``("train", "loss")``; bare strings for top-level keys like
+    ``"epoch"``) or :class:`ScalarHook` instances (the hook's
+    ``scalar_keys`` are expanded). Passing the hook itself keeps path
+    names out of the call site and lets the hook evolve its advertised
+    paths independently.
 
     Args:
         every_n_steps: Print a row every N training batches.
-        keys: State keys to print. Each entry is either a ``str`` path or a
-            :class:`ScalarHook` instance whose ``scalar_keys`` will be used.
-            ``step`` and ``epoch`` are always prepended.
+        keys: State paths to print. ``step`` and ``epoch`` are prepended.
         fmt: Format spec for each scalar column (default ``"{:>12.4g}"``).
 
     Example:
@@ -1272,8 +1252,8 @@ class Log(BaseHook):
             MetricsHook(...),
             step_speed,
             gpu,
-            Log(50, keys=[step_speed, gpu, "train/loss"]),
-            TensorBoardHook(...),   # also reads the same state keys
+            Log(50, keys=[step_speed, gpu, ("train", "loss")]),
+            TensorBoardHook(...),
         ]
         ```
     """
@@ -1302,18 +1282,23 @@ class Log(BaseHook):
         # config — handlers might be attached later via configure_run.
         self._metrics = _logging_mod.metrics_logger()
 
-    def _columns(self) -> list[str]:
+    def _paths(self) -> list[Path]:
+        """All paths rendered in order, including the built-in ``step`` / ``epoch``."""
         return ["step", "epoch", *self.keys]
+
+    def _columns(self) -> list[str]:
+        """Display names for each path — ``("train","loss")`` → ``"train/loss"``."""
+        return [display(p) for p in self._paths()]
 
     def _table_width(self) -> int:
         """Total rendered width of one row, including column separators."""
         col_w = _parse_fmt_width(self.fmt)
-        n_cols = len(self._columns())
+        n_cols = len(self._paths())
         # ``" ".join(...)`` adds (n_cols - 1) single-space separators.
         return n_cols * col_w + max(0, n_cols - 1)
 
     def _emit_header(self) -> None:
-        """Log a ``kind=header`` record — formatter renders aligned text."""
+        """Log a ``kind=header`` record — formatter renders a 2-row header."""
         if _logging_mod.has_effective_handlers(self._metrics):
             self._metrics.info(
                 "metrics header",
@@ -1321,13 +1306,12 @@ class Log(BaseHook):
                 columns=self._columns(),
             )
         else:
-            # Zero-config / unit-test fallback: render the same aligned
-            # header as :class:`PrettyTextFormatter` would produce and
-            # write it directly to stdout. Keeps the hook usable without
-            # any call to :func:`molix.logging.basicConfig`.
+            # Zero-config / unit-test fallback: mirror PrettyTextFormatter's
+            # 2-row layout so the console stays usable without basicConfig.
             width = _parse_fmt_width(self.fmt)
-            header = " ".join(f"{c:>{width}}" for c in self._columns())
-            print(header, flush=True)
+            top_row, bot_row = _logging_mod.split_header_rows(self._columns(), width)
+            print(top_row, flush=True)
+            print(bot_row, flush=True)
         self._rows_since_header = 0
 
     def announce(self, message: str) -> None:
@@ -1407,8 +1391,8 @@ class Log(BaseHook):
             "step": step,
             "epoch": int(state.get("epoch", 0)),
         }
-        for key in self.keys:
-            values[key] = state.get(key)
+        for path in self.keys:
+            values[display(path)] = resolve(state, path)
 
         if _logging_mod.has_effective_handlers(self._metrics):
             self._metrics.info(
@@ -1424,8 +1408,8 @@ class Log(BaseHook):
                 f"{values['step']:>{width}d}",
                 f"{values['epoch']:>{width}d}",
             ]
-            for key in self.keys:
-                v = values.get(key)
+            for path in self.keys:
+                v = values.get(display(path))
                 if isinstance(v, (int, float)) and not (isinstance(v, float) and v != v):
                     parts.append(self.fmt.format(v))
                 else:

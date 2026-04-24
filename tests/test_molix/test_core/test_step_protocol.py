@@ -380,7 +380,7 @@ def test_default_train_step_amp_backward_compatible():
     outputs = trainer.train_step.on_train_batch(trainer, state, batch)
     assert "loss" in outputs
     assert "predictions" in outputs
-    assert "train/loss" in state
+    assert "loss" in state["train"]
 
 
 def test_default_eval_step_with_amp_bfloat16():

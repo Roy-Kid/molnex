@@ -85,7 +85,7 @@ class DefaultTrainStep:
         else:
             trainer.optimizer.step()
 
-        state["train/loss"] = loss.item()
+        state["train"]["loss"] = loss.item()
 
         return {
             "loss": loss,

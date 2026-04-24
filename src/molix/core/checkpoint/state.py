@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 
 from molix.core.checkpoint.rng import capture_rng_states, restore_rng_states
+from molix.core.state import Path
 
 
 @dataclass
@@ -29,7 +30,9 @@ class Checkpoint:
         epoch: Current epoch (synced from ``TrainState``).
         global_step: Current global step (synced from ``TrainState``).
         best_metric: Best metric value seen so far.
-        best_metric_name: Name of the tracked metric.
+        best_metric_name: Path into ``state`` for the tracked metric —
+            a tuple ``("eval", "loss")`` for a nested scalar or a bare
+            string for a top-level key.
     """
 
     model: nn.Module
@@ -39,7 +42,7 @@ class Checkpoint:
     epoch: int = 0
     global_step: int = 0
     best_metric: float | None = None
-    best_metric_name: str = "eval/loss"
+    best_metric_name: Path = ("eval", "loss")
 
     # ------------------------------------------------------------------
     # Helpers
@@ -85,9 +88,11 @@ class Checkpoint:
         self.epoch = state_dict["epoch"]
         self.global_step = state_dict["global_step"]
         self.best_metric = state_dict.get("best_metric")
-        self.best_metric_name = state_dict.get(
-            "best_metric_name", "eval/loss"
-        )
+        stored = state_dict.get("best_metric_name", ("eval", "loss"))
+        # Tolerate slash-strings from older checkpoints by splitting on "/".
+        if isinstance(stored, str) and "/" in stored:
+            stored = tuple(stored.split("/"))
+        self.best_metric_name = stored
 
         self._unwrap_model().load_state_dict(state_dict["model_state_dict"])
         self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])

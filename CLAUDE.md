@@ -59,9 +59,22 @@ Python >=3.10 required. Requires `torch>=2.6` (always use latest stable PyTorch)
 
 ## Architecture
 
-### Nested TensorDict Data Flow
+### Two-tier data contract (raw sample vs collated batch)
 
-All molecular batch data uses nested `TensorDict` subclasses (`molix/data/types.py`) with per-level batch sizes:
+The pipeline speaks **two** shapes. They are intentionally different — get
+this wrong and `KeyError(('edges','edge_index'))` is the first thing you see.
+
+| Stage | Container | Example access |
+|---|---|---|
+| `DataSource[i]`, pipeline `SampleTask` / `DatasetTask` I/O, `MmapDataset[i]` | **flat `dict`** | `sample["Z"]`, `sample["edge_index"]`, `sample["targets"]["U0"]` |
+| Post-`collate_molecules` `GraphBatch` (what encoders / losses receive) | **nested `TensorDict`** | `batch["atoms", "Z"]`, `batch["edges", "edge_index"]`, `batch["graphs", "energy"]` |
+
+The single conversion point is `molix.data.collate.collate_molecules`
+(invoked by `DataModule._CollateFn`). Stats / diagnostics operating on
+individual cached samples use **flat** keys; model / loss / metric code
+operating on batches uses **nested tuple-keys**.
+
+#### Post-collate batch schema
 
 ```
 GraphBatch (batch_size=[])
@@ -78,7 +91,24 @@ GraphBatch (batch_size=[])
     └── <targets>
 ```
 
-Access: `batch["atoms", "Z"]`, `batch["edges", "bond_dist"]`. Encoder outputs extend via inheritance: `NodeRepAtoms` adds `node_features`, `EdgeRepEdges` adds `edge_features`.
+Access: `batch["atoms", "Z"]`, `batch["edges", "bond_dist"]`. Encoders
+mutate the batch in place, writing `node_features` under `atoms` and
+`edge_features` under `edges` — no subclass swap.
+
+### Cache format
+
+The on-disk cache is `molix.data.cache.PackedCache` — **one** `.pt` file
+per cache with concatenated per-atom / per-edge / per-graph tensors and
+`atom_ptr` / `edge_ptr` cumsum pointers. Loaded via `torch.load(mmap=True)`
+for zero-copy reads; each DataLoader worker shares the OS page cache.
+
+**Do not migrate to `TensorDict.memmap_()`.**
+`LazyStackedTensorDict.memmap_(prefix)` writes one subdirectory per
+sample (~1M files + ~260k dirs for QM9 130k molecules) — blows past HPC
+shared-fs inode budgets and destroys `rsync` / `tar` / `rm` performance.
+`PackedCache`'s single-file packed-bucket layout is strictly better for
+fixed-schema molecular datasets. See `src/molix/data/cache.py` module
+docstring for full rationale.
 
 ### Edge Convention (MUST follow everywhere)
 
@@ -115,6 +145,85 @@ molix.core (Trainer, TrainState, Step, Hook)
 molix.data (Dataset, collate, preprocess)
 molix.datasets (QM9, MD17)
 ```
+
+### State namespace contract
+
+`TrainState` (`src/molix/core/state.py`) is a dict with a **fixed
+top-level layout**. Every metric / scalar produced during training lives
+inside one of four **namespace sub-dicts**, never at the top level with
+a slash-prefix key.
+
+| top-level key         | owner                    | kind        |
+|-----------------------|--------------------------|-------------|
+| `epoch`               | `Trainer`                | counter     |
+| `global_step`         | `Trainer`                | counter     |
+| `stage`               | `Trainer` (`Stage` enum) | counter     |
+| `steps_since_last_eval` | `Trainer`              | counter     |
+| `best_metric`         | `CheckpointHook`         | scalar      |
+| `train`               | train-phase hooks        | **dict**    |
+| `eval`                | eval-phase hooks         | **dict**    |
+| `performance`         | throughput/timing hooks  | **dict**    |
+| `gpu`                 | GPU telemetry hooks      | **dict**    |
+
+**Writes — always nest.** Hooks must write into the namespace
+sub-dict, never into the flat root with a slash:
+
+```python
+# ✅ correct
+state["train"]["loss"] = loss.item()
+state["eval"]["MAE"] = mae
+state["performance"]["step_per_second"] = rate
+state["gpu"]["peak_gib"] = peak
+
+# ❌ rejected at __setitem__ — raises KeyError
+state["train/loss"] = loss.item()
+```
+
+This prevents two hooks from silently sharing a flat namespace and
+colliding on keys (which is exactly how the train/MAE-exploded-to-203
+bug happened: eval path wrote into an accumulator shared with the
+train path).
+
+**Reads — tuple paths internally, dotted strings only for display.**
+Hooks access scalars through nested dict lookups (``state["train"]["loss"]``)
+or via the :data:`~molix.core.state.Path` type — a bare string for
+top-level keys, a tuple for nested ones. Helpers at
+:mod:`molix.core.state`:
+
+```python
+from molix.core.state import resolve, display
+
+resolve(state, ("train", "loss"))     # → state["train"]["loss"] or None
+resolve(state, "epoch")               # → top-level key
+display(("train", "loss"))            # → "train/loss"  (for log column headers)
+```
+
+The dotted string form is **only** used as a display label (log column
+headers, TensorBoard tags); never as an addressing scheme inside the
+codebase.
+
+**Phase-ownership rules for hooks.**
+
+1. `on_train_batch_end`, `on_after_backward` — may write to
+   `state["train"]`, `state["performance"]`, `state["gpu"]`.
+2. `on_eval_batch_end`, `on_eval_step_complete` — may write to
+   `state["eval"]`.
+3. `on_epoch_start` / `on_epoch_end` — may write anywhere they own
+   by phase, but should **prefer the per-phase callbacks** so readers
+   have deterministic ordering.
+4. **Hooks must not share mutable buffers between train and val.**
+   If a hook needs the same metric on both sides (e.g. `MetricsHook`
+   with `MAE`), it must hold two distinct instances — typically via
+   `copy.deepcopy` in `__init__` — so a `.reset()` / `.update()` on
+   the val side is invisible to the train side.
+
+**Trainer guarantees for eval-phase hooks.**
+`_run_eval_phase` fires `on_eval_step_complete` at the end of **every**
+eval phase (both step-based `eval_every_n_steps` and epoch-end),
+before the LR scheduler reads `best_metric_name`. Eval-publishing
+hooks (`MetricsHook`, `TensorBoardHook`) should write their
+`state["eval"]` scalars from `on_eval_step_complete`, not
+`on_epoch_end`, to be available for the scheduler's read.
 
 ### Key Design Patterns
 

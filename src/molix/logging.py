@@ -285,6 +285,28 @@ def _csv_cell(value: Any) -> str:
     return s
 
 
+def split_header_rows(columns: list[str], col_width: int) -> tuple[str, str]:
+    """Render the 2-row table header.
+
+    Top row shows the category (namespace prefix before ``/``), bottom
+    row shows the item name; columns with no slash leave the top row
+    blank. Shared by :class:`PrettyTextFormatter` and
+    :meth:`molix.core.hooks.Log._emit_header` so both render identically.
+
+    Args:
+        columns: Display names — ``"train/loss"``, ``"epoch"``, …
+        col_width: Width each cell is right-padded to.
+
+    Returns:
+        ``(top_row, bottom_row)`` — already space-joined, ready to print.
+    """
+    cats = [c.split("/", 1)[0] if "/" in c else "" for c in columns]
+    items = [c.split("/", 1)[1] if "/" in c else c for c in columns]
+    top = " ".join(f"{c:>{col_width}}" for c in cats)
+    bot = " ".join(f"{c:>{col_width}}" for c in items)
+    return top, bot
+
+
 class PrettyTextFormatter(Formatter):
     """Channel-aware console formatter.
 
@@ -324,8 +346,8 @@ class PrettyTextFormatter(Formatter):
         extra = record.extra or {}
         kind = extra.get("kind")
         if kind == "header":
-            cols = extra["columns"]
-            return " ".join(f"{c:>{self._col_width}}" for c in cols)
+            top, bot = split_header_rows(extra["columns"], self._col_width)
+            return f"{top}\n{bot}"
         if kind == "row":
             cols = extra["columns"]
             values = extra["values"]

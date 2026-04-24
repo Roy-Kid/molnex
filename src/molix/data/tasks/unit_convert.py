@@ -48,7 +48,6 @@ class UnitConvert(SampleTask):
         if not conversions:
             raise ValueError("UnitConvert needs at least one field to convert.")
 
-        ureg = UnitSystem.ureg
         factors: dict[str, float] = {}
         units_repr: dict[str, tuple[str, str]] = {}
         for key, pair in conversions.items():
@@ -58,8 +57,8 @@ class UnitConvert(SampleTask):
                     f"(src_unit, dst_unit), got {pair!r}"
                 )
             src_str, dst_str = pair
-            src_unit = ureg.Unit(src_str)
-            dst_unit = ureg.Unit(dst_str)
+            src_unit = UnitSystem.Unit(src_str)
+            dst_unit = UnitSystem.Unit(dst_str)
             factor = float((1.0 * src_unit).to(dst_unit).magnitude)
             if not _is_finite(factor):
                 raise ValueError(

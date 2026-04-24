@@ -70,7 +70,7 @@ class DefaultEvalStep:
                 predictions = trainer.model(batch)
             loss = trainer.loss_fn(predictions, batch)
 
-        state["eval/loss"] = loss.item()
+        state["eval"]["loss"] = loss.item()
 
         return {
             "loss": loss,

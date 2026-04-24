@@ -446,7 +446,7 @@ class TestCheckpointHookIntegration:
             save_every_n_epochs=100,  # disable periodic saves
             save_last=False,
             save_best=True,
-            best_metric_name="eval/loss",
+            best_metric_name=("eval", "loss"),
             best_metric_mode="min",
         )
 
@@ -461,7 +461,7 @@ class TestCheckpointHookIntegration:
                 self._epoch = 0
 
             def on_epoch_end(self, trainer, state):
-                state["eval/loss"] = 1.0 - self._epoch * 0.3
+                state["eval"]["loss"] = 1.0 - self._epoch * 0.3
                 self._epoch += 1
 
         trainer.hooks.insert(0, FakeMetricHook())  # run before checkpoint hook
@@ -497,7 +497,7 @@ class TestCheckpointHookIntegration:
         from molix.core.hooks import Log
 
         ckpt_dir = str(tmp_path / "ckpts")
-        log_hook = Log(every_n_steps=1, keys=["train/loss"])
+        log_hook = Log(every_n_steps=1, keys=[("train", "loss")])
         ckpt_hook = CheckpointHook(
             checkpoint_dir=ckpt_dir,
             save_every_n_epochs=1,
@@ -518,7 +518,7 @@ class TestCheckpointHookIntegration:
         from molix.core.hooks import Log
 
         ckpt_dir = str(tmp_path / "ckpts")
-        log_hook = Log(every_n_steps=1, keys=["train/loss"])
+        log_hook = Log(every_n_steps=1, keys=[("train", "loss")])
         ckpt_hook = CheckpointHook(
             checkpoint_dir=ckpt_dir,
             save_every_n_epochs=10_000,  # disable periodic epoch_*.pt saves
