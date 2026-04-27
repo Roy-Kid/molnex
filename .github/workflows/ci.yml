@@ -1,15 +1,18 @@
 name: CI
 
-# This project ships a torch C++ extension (``src/molix/op/``) and a
-# stack of GPU-equivariance dependencies (``cuequivariance``,
-# ``cuequivariance-torch``).  Installing the project on a stock
-# ``ubuntu-latest`` GitHub runner has not been made to work end-to-end
-# from a fresh clone; the install only succeeds in the Alvis dev
-# environment where the system toolchain is already lined up.  Until a
-# self-hosted GPU runner exists, CI runs only the parts that don't need
-# a working install — ``ruff format`` and ``ruff check`` on the source
-# tree.  ``ty`` (type check) and the ``pytest`` suite both depend on
-# importable third-party stacks; those stay as local-dev gates instead.
+# Stock ``ubuntu-latest`` GitHub runners can install the project end-to-end
+# *without* a GPU because:
+#   * ``molnex_op`` defaults to ``MOLNEX_OP_ENABLE_CUDA=OFF`` and only needs
+#     a C++17 toolchain + libtorch (CMake config shipped inside the torch
+#     wheel).
+#   * ``cuequivariance-torch`` is a ``py3-none-any`` wheel and only depends
+#     on ``cuequivariance`` (also pure Python).  The CUDA kernel companion
+#     packages (``cuequivariance-ops-torch-cu1X``) are *not* required at
+#     install time and are not pulled in transitively.
+#
+# What this means for CI: lint + type-check + the pytest suite all run on
+# the stock runner.  Tests that strictly require CUDA must self-skip via
+# ``pytest.importorskip`` or ``pytest.mark.skipif(not torch.cuda.is_available())``.
 
 on:
   push:
@@ -20,7 +23,7 @@ on:
 
 jobs:
   lint:
-    name: Lint (ruff)
+    name: Lint
     runs-on: ubuntu-latest
 
     steps:
@@ -31,11 +34,36 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install ruff
-        run: pip install "ruff>=0.15"
+      # Pre-install build prerequisites in the outer env so the
+      # subsequent ``pip install --no-build-isolation`` can use them:
+      #   * ``scikit-build-core`` is the build backend declared in
+      #     ``pyproject.toml``.  Without it in the outer env, pip's
+      #     PEP 517 hook fails with ``BackendUnavailable``.
+      #   * ``torch`` ships ``TorchConfig.cmake``, which
+      #     ``src/molix/op/CMakeLists.txt`` consumes via
+      #     ``find_package(Torch REQUIRED)``.
+      #   * ``cmake>=4`` and ``ninja`` are the toolchain
+      #     ``scikit-build-core`` shells out to.
+      - name: Install build prerequisites
+        run: |
+          python -m pip install --upgrade pip
+          pip install "scikit-build-core>=0.10" "cmake>=4" ninja "torch>=2.10"
+
+      # ``CMAKE_PREFIX_PATH`` exposes the torch CMake config dir so
+      # ``find_package(Torch)`` resolves on stock GitHub runners (Alvis
+      # picks this up via system hooks; bare Ubuntu does not).
+      - name: Install project
+        run: |
+          export CMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
+          echo "CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
+          pip install -e ".[dev]" --no-build-isolation -v
+        timeout-minutes: 20
 
       - name: Ruff format
         run: ruff format --check src/ tests/
 
       - name: Ruff lint
         run: ruff check src/ tests/
+
+      - name: Type check
+        run: ty check src/
