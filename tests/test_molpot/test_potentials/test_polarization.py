@@ -6,7 +6,6 @@ import pytest
 import torch
 
 from molpot.potentials.polarization import Polarization
-
 from tests.utils import assert_compile_compatible
 
 
@@ -25,9 +24,7 @@ def water_like():
     alpha = torch.tensor([1.0, 0.5, 0.5], dtype=torch.float64)
     batch = torch.zeros(3, dtype=torch.long)
     # Fully-connected edges (exclude self-loops)
-    edge_index = torch.tensor(
-        [[0, 1], [0, 2], [1, 0], [1, 2], [2, 0], [2, 1]], dtype=torch.long
-    )
+    edge_index = torch.tensor([[0, 1], [0, 2], [1, 0], [1, 2], [2, 0], [2, 1]], dtype=torch.long)
     return pos, charge, alpha, batch, edge_index
 
 
@@ -46,9 +43,7 @@ def two_mol_batch():
     charge = torch.tensor([-0.5, 0.5, -0.5, 0.5], dtype=torch.float64)
     alpha = torch.tensor([1.0, 1.0, 1.0, 1.0], dtype=torch.float64)
     batch = torch.tensor([0, 0, 1, 1], dtype=torch.long)
-    edge_index = torch.tensor(
-        [[0, 1], [1, 0], [2, 3], [3, 2]], dtype=torch.long
-    )
+    edge_index = torch.tensor([[0, 1], [1, 0], [2, 3], [3, 2]], dtype=torch.long)
     return pos, charge, alpha, batch, edge_index
 
 
@@ -57,8 +52,12 @@ class TestPolarization:
         pos, charge, alpha, batch, edge_index = water_like
         pol = Polarization().double()
         energy = pol(
-            pos=pos, charge=charge, alpha=alpha,
-            batch=batch, edge_index=edge_index, num_graphs=1,
+            pos=pos,
+            charge=charge,
+            alpha=alpha,
+            batch=batch,
+            edge_index=edge_index,
+            num_graphs=1,
         )
         assert energy.shape == (1,)
 
@@ -66,8 +65,12 @@ class TestPolarization:
         pos, charge, alpha, batch, edge_index = two_mol_batch
         pol = Polarization().double()
         energy = pol(
-            pos=pos, charge=charge, alpha=alpha,
-            batch=batch, edge_index=edge_index, num_graphs=2,
+            pos=pos,
+            charge=charge,
+            alpha=alpha,
+            batch=batch,
+            edge_index=edge_index,
+            num_graphs=2,
         )
         assert energy.shape == (2,)
 
@@ -76,8 +79,11 @@ class TestPolarization:
         pos, charge, alpha, batch, edge_index = water_like
         pol = Polarization().double()
         energy = pol(
-            pos=pos, charge=charge, alpha=alpha,
-            batch=batch, edge_index=edge_index,
+            pos=pos,
+            charge=charge,
+            alpha=alpha,
+            batch=batch,
+            edge_index=edge_index,
         )
         assert energy.item() < 0
 
@@ -86,8 +92,11 @@ class TestPolarization:
         charge = torch.zeros(3, dtype=torch.float64)
         pol = Polarization().double()
         energy = pol(
-            pos=pos, charge=charge, alpha=alpha,
-            batch=batch, edge_index=edge_index,
+            pos=pos,
+            charge=charge,
+            alpha=alpha,
+            batch=batch,
+            edge_index=edge_index,
         )
         assert abs(energy.item()) < 1e-10
 
@@ -95,14 +104,18 @@ class TestPolarization:
         pos, charge, _, batch, edge_index = water_like
         pol = Polarization().double()
         e_small = pol(
-            pos=pos, charge=charge,
+            pos=pos,
+            charge=charge,
             alpha=torch.tensor([0.5, 0.25, 0.25], dtype=torch.float64),
-            batch=batch, edge_index=edge_index,
+            batch=batch,
+            edge_index=edge_index,
         )
         e_large = pol(
-            pos=pos, charge=charge,
+            pos=pos,
+            charge=charge,
             alpha=torch.tensor([5.0, 2.5, 2.5], dtype=torch.float64),
-            batch=batch, edge_index=edge_index,
+            batch=batch,
+            edge_index=edge_index,
         )
         # Larger polarizability → more negative energy
         assert e_large.item() < e_small.item()
@@ -111,8 +124,12 @@ class TestPolarization:
         pos, charge, alpha, batch, edge_index = two_mol_batch
         pol = Polarization().double()
         energy = pol(
-            pos=pos, charge=charge, alpha=alpha,
-            batch=batch, edge_index=edge_index, num_graphs=2,
+            pos=pos,
+            charge=charge,
+            alpha=alpha,
+            batch=batch,
+            edge_index=edge_index,
+            num_graphs=2,
         )
         assert torch.allclose(energy[0], energy[1], atol=1e-8)
 
@@ -121,8 +138,11 @@ class TestPolarization:
         pos = pos.clone().requires_grad_(True)
         pol = Polarization().double()
         energy = pol(
-            pos=pos, charge=charge, alpha=alpha,
-            batch=batch, edge_index=edge_index,
+            pos=pos,
+            charge=charge,
+            alpha=alpha,
+            batch=batch,
+            edge_index=edge_index,
         )
         energy.sum().backward()
         assert pos.grad is not None
@@ -132,18 +152,27 @@ class TestPolarization:
         pos, charge, alpha, batch, edge_index = two_mol_batch
         pol = Polarization().double()
         energy = pol(
-            pos=pos, charge=charge, alpha=alpha,
-            batch=batch, edge_index=edge_index,
+            pos=pos,
+            charge=charge,
+            alpha=alpha,
+            batch=batch,
+            edge_index=edge_index,
         )
         assert energy.shape == (2,)
 
-    @pytest.mark.xfail(reason="Polarization uses scatter/index_add for per-graph aggregation", strict=False)
+    @pytest.mark.xfail(
+        reason="Polarization uses scatter/index_add for per-graph aggregation", strict=False
+    )
     def test_compile(self, water_like):
         pos, charge, alpha, batch, edge_index = water_like
         pol = Polarization().double()
         assert_compile_compatible(
             pol,
             strict=False,
-            pos=pos, charge=charge, alpha=alpha,
-            batch=batch, edge_index=edge_index, num_graphs=1,
+            pos=pos,
+            charge=charge,
+            alpha=alpha,
+            batch=batch,
+            edge_index=edge_index,
+            num_graphs=1,
         )

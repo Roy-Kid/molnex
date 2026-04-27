@@ -13,10 +13,9 @@ import pytest
 import torch
 
 from molix.data.cache import PackedCache
-from molix.data.pipeline import Pipeline, PipelineSpec, TaskEntry
+from molix.data.pipeline import Pipeline, TaskEntry
 from molix.data.source import InMemorySource
 from molix.data.task import BatchTask, DatasetTask, SampleTask
-
 
 # ---------------------------------------------------------------------------
 # Stub tasks
@@ -129,7 +128,7 @@ class TestBuilder:
 
     def test_rejects_non_task_non_callable(self):
         with pytest.raises(TypeError, match="Task"):
-            Pipeline("p").add(42)    # type: ignore[arg-type]
+            Pipeline("p").add(42)  # type: ignore[arg-type]
 
     def test_rejects_duplicate_name_on_add(self):
         p = Pipeline("p").add(CountingSample(), name="shared")
@@ -158,13 +157,7 @@ class TestBuilder:
 
 class TestGrouping:
     def test_prepare_tasks_include_sample_and_dataset(self):
-        spec = (
-            Pipeline("p")
-            .add(CountingSample())
-            .add(MeanShift())
-            .add(NoopBatch())
-            .build()
-        )
+        spec = Pipeline("p").add(CountingSample()).add(MeanShift()).add(NoopBatch()).build()
         assert len(spec.prepare_tasks) == 2
         assert len(spec.batch_tasks) == 1
 
@@ -218,12 +211,7 @@ class TestPipelineId:
 
 class TestToDict:
     def test_contains_task_names_and_types(self):
-        spec = (
-            Pipeline("p")
-            .add(CountingSample("a"))
-            .add(NoopBatch())
-            .build()
-        )
+        spec = Pipeline("p").add(CountingSample("a")).add(NoopBatch()).build()
         d = spec.to_dict()
         assert d["name"] == "p"
         assert d["pipeline_id"] == spec.pipeline_id
@@ -241,8 +229,8 @@ class TestToDict:
 class TestTaskEntry:
     def test_is_frozen(self):
         e = TaskEntry(name="x", task=CountingSample())
-        with pytest.raises(Exception):    # FrozenInstanceError or AttributeError
-            e.name = "y"                  # type: ignore[misc]
+        with pytest.raises(Exception):  # FrozenInstanceError or AttributeError
+            e.name = "y"  # type: ignore[misc]
 
     def test_apply_dispatches_runnable(self):
         t = CountingSample()
@@ -257,7 +245,7 @@ class TestTaskEntry:
         assert out["tag"] is True
 
     def test_apply_rejects_non_callable(self):
-        entry = TaskEntry(name="bad", task=42)    # type: ignore[arg-type]
+        entry = TaskEntry(name="bad", task=42)  # type: ignore[arg-type]
         with pytest.raises(TypeError):
             entry.apply({})
 
@@ -309,7 +297,7 @@ class TestRun:
         spec = Pipeline("p").add(shift).build()
         list(
             spec.run(
-                InMemorySource(_samples(10)),   # y = 0..9
+                InMemorySource(_samples(10)),  # y = 0..9
                 fit_source=InMemorySource(_samples(5)),  # y = 0..4 → mean = 2
             )
         )
@@ -318,6 +306,7 @@ class TestRun:
 
     def test_returns_iterator(self):
         import types
+
         spec = Pipeline("p").add(CountingSample()).build()
         it = spec.run(InMemorySource(_samples(3)))
         assert isinstance(it, types.GeneratorType)
@@ -330,12 +319,7 @@ class TestRun:
 
 class TestTaskStates:
     def test_collect_includes_only_dataset_tasks(self):
-        spec = (
-            Pipeline("p")
-            .add(CountingSample("s"))
-            .add(MeanShift("y"))
-            .build()
-        )
+        spec = Pipeline("p").add(CountingSample("s")).add(MeanShift("y")).build()
         list(spec.run(InMemorySource(_samples(4))))
         states = spec.collect_task_states()
         assert set(states) == {"mean_shift:y"}
@@ -344,7 +328,7 @@ class TestTaskStates:
         # Fit on one spec, dump, load into a fresh spec.
         a = MeanShift()
         spec_a = Pipeline("p").add(a).build()
-        list(spec_a.run(InMemorySource(_samples(6))))    # y=0..5 → mean=2.5
+        list(spec_a.run(InMemorySource(_samples(6))))  # y=0..5 → mean=2.5
         states = spec_a.collect_task_states()
 
         b = MeanShift()
@@ -427,7 +411,7 @@ class TestBuildCache:
         shift = MeanShift("y")
         spec = Pipeline("p").add(shift).build()
         sink = tmp_path / "x.pt"
-        spec.build_cache(InMemorySource(_samples(4)), sink)   # y=0..3 → mean=1.5
+        spec.build_cache(InMemorySource(_samples(4)), sink)  # y=0..3 → mean=1.5
 
         loaded = PackedCache(sink).load()
         assert torch.allclose(
@@ -456,7 +440,7 @@ class TestBuildCache:
         sink = tmp_path / "x.pt"
         spec.build_cache(InMemorySource(_samples(2)), sink)
         mtime = sink.stat().st_mtime_ns
-        spec.build_cache(InMemorySource(_samples(99)), sink)   # no-op
+        spec.build_cache(InMemorySource(_samples(99)), sink)  # no-op
         assert sink.stat().st_mtime_ns == mtime
 
     def test_overwrite(self, tmp_path):
@@ -539,5 +523,5 @@ class TestCacheDDP:
         assert packed_a.sink != packed_b.sink
         mean_a = packed_a.load()["task_states"]["mean_shift:y"]["mean"].item()
         mean_b = packed_b.load()["task_states"]["mean_shift:y"]["mean"].item()
-        assert abs(mean_a - 2.0) < 1e-9   # y=0..4 → mean=2
-        assert abs(mean_b - 1.0) < 1e-9   # y=0..2 → mean=1
+        assert abs(mean_a - 2.0) < 1e-9  # y=0..4 → mean=2
+        assert abs(mean_b - 1.0) < 1e-9  # y=0..2 → mean=1

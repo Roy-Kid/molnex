@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import random
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -12,8 +11,8 @@ import torch.nn as nn
 
 from molix.config import set_precision
 from molix.core.checkpoint import (
-    TorchSaveBackend,
     Checkpoint,
+    TorchSaveBackend,
     capture_rng_states,
     restore_rng_states,
 )
@@ -243,18 +242,14 @@ class TestCheckpoint:
         sched.step()
         sched.step()
 
-        ts = Checkpoint(
-            model=model, optimizer=opt, lr_scheduler=sched
-        )
+        ts = Checkpoint(model=model, optimizer=opt, lr_scheduler=sched)
         sd = ts.state_dict()
 
         model2 = _SimpleModel()
         opt2 = torch.optim.SGD(model2.parameters(), lr=0.1)
         sched2 = torch.optim.lr_scheduler.StepLR(opt2, step_size=1, gamma=0.5)
 
-        ts2 = Checkpoint(
-            model=model2, optimizer=opt2, lr_scheduler=sched2
-        )
+        ts2 = Checkpoint(model=model2, optimizer=opt2, lr_scheduler=sched2)
         ts2.load_state_dict(sd)
 
         assert sched2.last_epoch == sched.last_epoch
@@ -301,9 +296,7 @@ class TestCheckpoint:
         assert ts2.epoch == 7
         assert ts2.global_step == 210
         assert ts2.best_metric == pytest.approx(0.123)
-        assert torch.equal(
-            model2.linear.weight, model.linear.weight
-        )
+        assert torch.equal(model2.linear.weight, model.linear.weight)
 
 
 # ---------------------------------------------------------------------------
@@ -338,9 +331,7 @@ class TestTrainerNewParams:
 
     def test_lr_scheduler_factory(self):
         trainer = _make_trainer(
-            lr_scheduler_factory=lambda opt: torch.optim.lr_scheduler.StepLR(
-                opt, step_size=10
-            ),
+            lr_scheduler_factory=lambda opt: torch.optim.lr_scheduler.StepLR(opt, step_size=10),
         )
         assert trainer.lr_scheduler is not None
         assert trainer._checkpoint.lr_scheduler is trainer.lr_scheduler
@@ -404,9 +395,7 @@ class TestTrainerResume:
     def test_resume_from_nonexistent_starts_fresh(self, tmp_path):
         """Resume from missing file starts from epoch 0."""
         dm = _MockDataModule(batches_per_epoch=2)
-        trainer = _make_trainer(
-            resume_from_checkpoint=str(tmp_path / "missing.pt")
-        )
+        trainer = _make_trainer(resume_from_checkpoint=str(tmp_path / "missing.pt"))
         state = trainer.train(dm, max_epochs=1)
         assert state.epoch == 1
         assert state.global_step == 2
@@ -482,9 +471,7 @@ class TestCheckpointHookIntegration:
             save_last=True,
         )
         trainer = _make_trainer(
-            lr_scheduler_factory=lambda opt: torch.optim.lr_scheduler.StepLR(
-                opt, step_size=1
-            ),
+            lr_scheduler_factory=lambda opt: torch.optim.lr_scheduler.StepLR(opt, step_size=1),
             hooks=[hook],
         )
         trainer.train(_MockDataModule(batches_per_epoch=2), max_epochs=1)

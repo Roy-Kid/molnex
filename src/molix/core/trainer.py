@@ -99,11 +99,7 @@ class Trainer:
         self.optimizer = optimizer_factory(model.parameters())
 
         # lr scheduler
-        self.lr_scheduler = (
-            lr_scheduler_factory(self.optimizer)
-            if lr_scheduler_factory
-            else None
-        )
+        self.lr_scheduler = lr_scheduler_factory(self.optimizer) if lr_scheduler_factory else None
 
         # Scaler reflects current global config. Call :meth:`set_precision`
         # to change it after construction.
@@ -189,9 +185,7 @@ class Trainer:
                 or if either value is <= 0.
         """
         if max_epochs is None and max_steps is None:
-            raise ValueError(
-                "At least one of max_epochs or max_steps must be specified"
-            )
+            raise ValueError("At least one of max_epochs or max_steps must be specified")
         if max_epochs is not None and max_epochs <= 0:
             raise ValueError(f"max_epochs must be > 0, got {max_epochs}")
         if max_steps is not None and max_steps <= 0:
@@ -257,9 +251,7 @@ class Trainer:
 
         if str(path) == "auto":
             run_id = os.environ.get("TORCHELASTIC_RUN_ID")
-            snapshot_dir = os.environ.get(
-                "TORCHELASTIC_SNAPSHOT_DIR", "./snapshots"
-            )
+            snapshot_dir = os.environ.get("TORCHELASTIC_SNAPSHOT_DIR", "./snapshots")
             if run_id:
                 snapshot_path = Path(snapshot_dir) / run_id / "snapshot.pt"
                 if snapshot_path.exists():
@@ -367,9 +359,7 @@ class Trainer:
             # boundaries. Pull the metric the Checkpoint aggregate is tracking
             # (``best_metric_name``, defaults to ``eval/loss``) so the
             # scheduler sees the same signal the user's checkpoint hook does.
-            if isinstance(
-                self.lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau
-            ):
+            if isinstance(self.lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                 metric_name = self._checkpoint.best_metric_name
                 metric = resolve(self.state, metric_name)
                 if metric is not None:
@@ -492,7 +482,7 @@ class Trainer:
             f"    batch_size   : {batch_size}",
             f"    max_epochs   : {max_epochs_str}",
             f"    max_steps    : {max_steps_str}",
-            f"    eval_every   : "
+            "    eval_every   : "
             + (f"{self.eval_every_n_steps} steps" if self.eval_every_n_steps else "epoch-end"),
             f"    resume_epoch : {self.state.epoch}, global_step: {self.state.global_step}",
             f"    hooks        : {hooks_str}",

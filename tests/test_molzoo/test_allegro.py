@@ -15,9 +15,6 @@ Coverage:
 
 from __future__ import annotations
 
-import math
-
-import pytest
 import torch
 import torch.nn as nn
 
@@ -26,10 +23,8 @@ from molpot.heads import EdgeEnergyHead
 from molrep.utils.equivariance import (
     random_rotation_matrix,
     rotate_vectors,
-    rotation_matrix_z,
 )
 from molzoo.allegro import Allegro
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -76,9 +71,7 @@ def _build_graph(
     )
     td = {"atoms": atoms, "edges": edges}
     if with_graphs:
-        td["graphs"] = GraphData(
-            num_atoms=torch.tensor([n], dtype=torch.long), batch_size=[1]
-        )
+        td["graphs"] = GraphData(num_atoms=torch.tensor([n], dtype=torch.long), batch_size=[1])
     return GraphBatch(**td, batch_size=[])
 
 
@@ -226,9 +219,7 @@ class TestEnergyInvariants:
 class TestOverfitSingleBatch:
     def test_overfit_constant_target(self):
         torch.manual_seed(42)
-        pos = torch.tensor(
-            [[0.00, 0.00, 0.00], [0.96, 0.00, 0.00], [-0.24, 0.93, 0.00]]
-        )
+        pos = torch.tensor([[0.00, 0.00, 0.00], [0.96, 0.00, 0.00], [-0.24, 0.93, 0.00]])
         Z = torch.tensor([8, 1, 1])
         g = _build_graph(pos, Z, r_cut=3.0)
 
@@ -260,6 +251,5 @@ class TestOverfitSingleBatch:
             opt.step()
         final_loss = loss.item()
         assert final_loss < 1e-3, (
-            f"single-batch overfit failed: initial={initial_loss:.3e}, "
-            f"final={final_loss:.3e}"
+            f"single-batch overfit failed: initial={initial_loss:.3e}, final={final_loss:.3e}"
         )

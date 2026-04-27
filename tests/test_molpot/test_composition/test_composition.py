@@ -6,11 +6,11 @@ import pytest
 import torch
 
 from molix.data.types import AtomData, EdgeData, GraphBatch
-from molpot.pooling import EdgeToNodePooling, LayerPooling
 from molpot.composition import LJParameterHead, PotentialComposer
+from molpot.pooling import EdgeToNodePooling, LayerPooling
 from molpot.potentials import LJ126
 from molrep.embedding.node import DiscreteEmbeddingSpec
-from molzoo import Allegro, MACE
+from molzoo import MACE, Allegro
 
 
 @pytest.fixture
@@ -43,7 +43,9 @@ def molecular_batch():
 
     return GraphBatch(
         atoms=AtomData(
-            Z=Z, pos=pos, batch=batch_idx,
+            Z=Z,
+            pos=pos,
+            batch=batch_idx,
             batch_size=[5],
         ),
         edges=EdgeData(

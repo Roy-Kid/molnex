@@ -51,9 +51,7 @@ def _parse_extxyz(path: Path) -> list[Sample]:
                 energy = float(tok.split("=", 1)[1])
                 break
         if energy is None:
-            raise ValueError(
-                f"Missing 'energy=...' tag in {path} at structure {len(samples)}"
-            )
+            raise ValueError(f"Missing 'energy=...' tag in {path} at structure {len(samples)}")
         Zs, pos, forces = [], [], []
         for row in lines[i + 2 : i + 2 + natoms]:
             parts = row.split()

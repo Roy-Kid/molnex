@@ -21,7 +21,6 @@ from molix.data.dataset import (
     SubsetDataset,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -74,9 +73,7 @@ class TestMmapDataset:
         samples = [
             {
                 "Z": torch.tensor([1, 6], dtype=torch.int64),
-                "pos": torch.tensor(
-                    [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=torch.float32
-                ),
+                "pos": torch.tensor([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=torch.float32),
                 "flag": torch.tensor([True, False], dtype=torch.bool),
             }
         ]
@@ -146,9 +143,7 @@ class TestCachedDataset:
             task_states={"dress": {"baseline": torch.tensor([1.0])}},
         )
         ds = CachedDataset(sink)
-        assert torch.equal(
-            ds.get_task_state("dress")["baseline"], torch.tensor([1.0])
-        )
+        assert torch.equal(ds.get_task_state("dress")["baseline"], torch.tensor([1.0]))
 
 
 # ---------------------------------------------------------------------------

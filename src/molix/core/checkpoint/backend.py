@@ -22,9 +22,7 @@ class CheckpointBackend(Protocol):
         """Save *state_dict* to *path*."""
         ...
 
-    def load(
-        self, path: str | Path, *, map_location: Any = None
-    ) -> dict[str, Any]:
+    def load(self, path: str | Path, *, map_location: Any = None) -> dict[str, Any]:
         """Load a state_dict from *path*."""
         ...
 
@@ -53,9 +51,7 @@ class TorchSaveBackend:
         else:
             os.close(fd)
 
-    def load(
-        self, path: str | Path, *, map_location: Any = None
-    ) -> dict[str, Any]:
+    def load(self, path: str | Path, *, map_location: Any = None) -> dict[str, Any]:
         return torch.load(path, map_location=map_location, weights_only=False)
 
 

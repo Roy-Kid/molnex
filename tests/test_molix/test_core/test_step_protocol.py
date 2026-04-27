@@ -5,9 +5,9 @@ import torch
 import torch.nn as nn
 
 from molix.config import set_precision
+from molix.core.state import TrainState
+from molix.core.steps import DefaultEvalStep, DefaultTrainStep, extract_model_inputs
 from molix.core.trainer import Trainer
-from molix.core.state import TrainState, Stage
-from molix.core.steps import Step, DefaultTrainStep, DefaultEvalStep, extract_model_inputs
 
 
 @pytest.fixture(autouse=True)
@@ -414,9 +414,7 @@ def test_on_after_backward_fires_during_training():
     class AfterBackwardHook:
         def on_after_backward(self, trainer, state):
             # Gradients should exist at this point
-            has_grads = any(
-                p.grad is not None for p in trainer.model.parameters()
-            )
+            has_grads = any(p.grad is not None for p in trainer.model.parameters())
             call_log.append(("on_after_backward", has_grads))
 
     model = SimpleModel()
@@ -443,9 +441,7 @@ def test_on_after_backward_fires_with_amp():
 
     class AfterBackwardHook:
         def on_after_backward(self, trainer, state):
-            has_grads = any(
-                p.grad is not None for p in trainer.model.parameters()
-            )
+            has_grads = any(p.grad is not None for p in trainer.model.parameters())
             call_log.append(has_grads)
 
     model = SimpleModel()

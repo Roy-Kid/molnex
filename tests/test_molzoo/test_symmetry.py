@@ -13,23 +13,21 @@ from __future__ import annotations
 
 import pytest
 import torch
-
-from molix.data.types import GraphBatch
-from molrep.embedding.node import DiscreteEmbeddingSpec
-from molrep.utils.equivariance import random_rotation_matrix, rotate_vectors
-from molpot.pooling import LayerPooling, EdgeToNodePooling
-from molpot.heads import AtomicEnergyMLP
-from molpot.derivation import EnergyAggregation, ForceDerivation
-from molzoo import MACE, Allegro
-
 from tests.symmetry_helpers import (
     make_graph_batch,
-    translate_graph,
-    rotate_graph,
     permute_graph,
     recompute_edge_geometry,
+    rotate_graph,
+    translate_graph,
 )
 
+from molix.data.types import GraphBatch
+from molpot.derivation import EnergyAggregation, ForceDerivation
+from molpot.heads import AtomicEnergyMLP
+from molpot.pooling import EdgeToNodePooling, LayerPooling
+from molrep.embedding.node import DiscreteEmbeddingSpec
+from molrep.utils.equivariance import random_rotation_matrix, rotate_vectors
+from molzoo import MACE, Allegro
 
 # ---------------------------------------------------------------------------
 # Pipeline builder (encoder → energy → forces)
@@ -88,18 +86,30 @@ def make_pipeline(encoder, is_edge_encoder: bool = False):
 def small_molecule():
     """5-atom chain with 8 edges, 2 molecules (3+2)."""
     torch.manual_seed(42)
-    pos = torch.tensor([
-        [0.0, 0.0, 0.0],
-        [1.2, 0.3, 0.0],
-        [2.5, 0.0, 0.1],
-        [4.0, 0.5, 0.0],
-        [5.3, 0.2, 0.1],
-    ], dtype=torch.float32)
+    pos = torch.tensor(
+        [
+            [0.0, 0.0, 0.0],
+            [1.2, 0.3, 0.0],
+            [2.5, 0.0, 0.1],
+            [4.0, 0.5, 0.0],
+            [5.3, 0.2, 0.1],
+        ],
+        dtype=torch.float32,
+    )
     Z = torch.tensor([6, 1, 8, 6, 1], dtype=torch.long)
-    edge_index = torch.tensor([
-        [0, 1], [1, 0], [1, 2], [2, 1],
-        [2, 3], [3, 2], [3, 4], [4, 3],
-    ], dtype=torch.long)
+    edge_index = torch.tensor(
+        [
+            [0, 1],
+            [1, 0],
+            [1, 2],
+            [2, 1],
+            [2, 3],
+            [3, 2],
+            [3, 4],
+            [4, 3],
+        ],
+        dtype=torch.long,
+    )
     batch = torch.tensor([0, 0, 0, 1, 1], dtype=torch.long)
     return make_graph_batch(pos, Z, edge_index, batch)
 
@@ -223,7 +233,7 @@ class TestRotationEquivariance:
 
     _mace_rotation_xfail = pytest.mark.xfail(
         reason="MACE rotation invariance requires cuequivariance_ops_torch GPU kernel; "
-               "naive fallback introduces O(0.1) numerical error in SymmetricContraction",
+        "naive fallback introduces O(0.1) numerical error in SymmetricContraction",
         strict=False,
     )
 
@@ -393,7 +403,9 @@ class TestPermutationEquivariance:
         assert torch.allclose(e_ref, e_p, atol=1e-5, rtol=1e-5)
 
     @pytest.mark.parametrize("seed", SEEDS)
-    def test_allegro_pipeline_energy_permutation_invariance(self, allegro_encoder, small_molecule, seed):
+    def test_allegro_pipeline_energy_permutation_invariance(
+        self, allegro_encoder, small_molecule, seed
+    ):
         torch.manual_seed(seed)
         n = small_molecule["atoms", "Z"].shape[0]
         perm = torch.randperm(n)
@@ -428,7 +440,9 @@ class TestPermutationEquivariance:
         assert torch.allclose(f_ref[perm], f_p, atol=1e-5, rtol=1e-5)
 
     @pytest.mark.parametrize("seed", SEEDS)
-    def test_allegro_pipeline_force_permutation_equivariance(self, allegro_encoder, small_molecule, seed):
+    def test_allegro_pipeline_force_permutation_equivariance(
+        self, allegro_encoder, small_molecule, seed
+    ):
         """F(perm(x))[i] = F(x)[perm[i]]"""
         torch.manual_seed(seed)
         n = small_molecule["atoms", "Z"].shape[0]

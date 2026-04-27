@@ -377,9 +377,7 @@ class PrettyTextFormatter(Formatter):
             values = extra["values"]
             parts: list[str] = []
             for c in cols:
-                parts.append(
-                    _render_metric_cell(values.get(c), self._row_fmt, self._col_width)
-                )
+                parts.append(_render_metric_cell(values.get(c), self._row_fmt, self._col_width))
             return " ".join(parts)
         width = int(extra.get("table_width", get_table_width()))
         if kind == "epoch_sep":
@@ -571,22 +569,26 @@ def configure_run(
 
     # 1. stdout — pretty view (metrics + events + WARNING+ only).
     stdout_handler = StreamHandler(stream=stream or sys.stdout, level=Level.DEBUG)
-    stdout_handler.set_formatter(
-        PrettyTextFormatter(col_width=col_width, row_fmt=row_fmt)
-    )
+    stdout_handler.set_formatter(PrettyTextFormatter(col_width=col_width, row_fmt=row_fmt))
     stdout_handler.add_filter(_StdoutConsoleFilter(console_lvl))
     root.add_handler(stdout_handler)
 
     # 2. train.log — full structured audit trail.
     train_handler = FileHandler(
-        run_dir / "train.log", mode="w", level=file_lvl, encoding="utf-8",
+        run_dir / "train.log",
+        mode="w",
+        level=file_lvl,
+        encoding="utf-8",
     )
     train_handler.set_formatter(TextFormatter())
     root.add_handler(train_handler)
 
     # 3. metrics.csv — structured training-table sink.
     csv_handler = FileHandler(
-        run_dir / "metrics.csv", mode="w", level=Level.INFO, encoding="utf-8",
+        run_dir / "metrics.csv",
+        mode="w",
+        level=Level.INFO,
+        encoding="utf-8",
     )
     csv_handler.set_formatter(CSVMetricsFormatter())
     csv_handler.add_filter(ChannelFilter(METRICS_LOGGER_NAME))
@@ -596,7 +598,10 @@ def configure_run(
 
     # 4. events.log — inline-announce timeline.
     events_handler = FileHandler(
-        run_dir / "events.log", mode="w", level=Level.INFO, encoding="utf-8",
+        run_dir / "events.log",
+        mode="w",
+        level=Level.INFO,
+        encoding="utf-8",
     )
     events_handler.set_formatter(EventFormatter())
     events_handler.add_filter(ChannelFilter(EVENTS_LOGGER_NAME))
@@ -604,7 +609,10 @@ def configure_run(
 
     # 5. warnings.log — everything WARNING+, structured.
     warn_handler = FileHandler(
-        run_dir / "warnings.log", mode="w", level=Level.WARNING, encoding="utf-8",
+        run_dir / "warnings.log",
+        mode="w",
+        level=Level.WARNING,
+        encoding="utf-8",
     )
     warn_handler.set_formatter(TextFormatter())
     root.add_handler(warn_handler)

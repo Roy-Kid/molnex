@@ -427,9 +427,7 @@ class CheckpointHook(BaseHook):
         import torch
 
         if best_metric_mode not in ("min", "max"):
-            raise ValueError(
-                f"best_metric_mode must be 'min' or 'max', got {best_metric_mode!r}"
-            )
+            raise ValueError(f"best_metric_mode must be 'min' or 'max', got {best_metric_mode!r}")
 
         self.os = os
         self.torch = torch
@@ -676,11 +674,7 @@ class MetricsHook(ScalarHook):
     @property
     def scalar_keys(self) -> tuple[Path, ...]:
         names = [m.__class__.__name__ for m in self.train_metrics]
-        return tuple(
-            (prefix, n)
-            for prefix in (self.prefix_train, self.prefix_val)
-            for n in names
-        )
+        return tuple((prefix, n) for prefix in (self.prefix_train, self.prefix_val) for n in names)
 
     def _extract_value(self, data: Any, keys: tuple) -> Any:
         """Extract value from nested dict/dataclass using key path."""
@@ -1094,7 +1088,7 @@ class GPUMemoryHook(ScalarHook):
         "peak": "peak_gib",
     }
 
-    _GB = 1024 ** 3  # GiB, matches the ``_gib`` suffix on the keys
+    _GB = 1024**3  # GiB, matches the ``_gib`` suffix on the keys
 
     def __init__(self, metrics: Sequence[str] = ("alloc", "resv", "peak")) -> None:
         metrics = tuple(metrics)
@@ -1103,8 +1097,7 @@ class GPUMemoryHook(ScalarHook):
         unknown = [m for m in metrics if m not in self._AVAILABLE]
         if unknown:
             raise ValueError(
-                f"GPUMemoryHook: unknown metric(s) {unknown}. "
-                f"Available: {sorted(self._AVAILABLE)}."
+                f"GPUMemoryHook: unknown metric(s) {unknown}. Available: {sorted(self._AVAILABLE)}."
             )
         self.metrics: tuple[str, ...] = metrics
 
@@ -1175,8 +1168,7 @@ class GPUUtilsHook(ScalarHook):
         unknown = [m for m in metrics if m not in self._AVAILABLE]
         if unknown:
             raise ValueError(
-                f"GPUUtilsHook: unknown metric(s) {unknown}. "
-                f"Available: {sorted(self._AVAILABLE)}."
+                f"GPUUtilsHook: unknown metric(s) {unknown}. Available: {sorted(self._AVAILABLE)}."
             )
         self.metrics: tuple[str, ...] = metrics
 
@@ -1188,9 +1180,7 @@ class GPUUtilsHook(ScalarHook):
         import torch
 
         if not torch.cuda.is_available():
-            raise RuntimeError(
-                "GPUUtilsHook requires CUDA but torch.cuda.is_available() is False."
-            )
+            raise RuntimeError("GPUUtilsHook requires CUDA but torch.cuda.is_available() is False.")
         try:
             import pynvml as nvml
         except ImportError as exc:
@@ -1284,15 +1274,17 @@ def _as_scalar(value) -> float | int | None:
 # by the default train/eval steps — not advertised by any hook, but always
 # available. Used by :meth:`Log._validate_keys` so users can log them
 # without registering a hook for them.
-_BUILTIN_STATE_PATHS: frozenset = frozenset({
-    "epoch",
-    "global_step",
-    "stage",
-    "steps_since_last_eval",
-    "best_metric",
-    ("train", "loss"),
-    ("eval", "loss"),
-})
+_BUILTIN_STATE_PATHS: frozenset = frozenset(
+    {
+        "epoch",
+        "global_step",
+        "stage",
+        "steps_since_last_eval",
+        "best_metric",
+        ("train", "loss"),
+        ("eval", "loss"),
+    }
+)
 
 
 def _normalize_key(item) -> Path:
@@ -1309,9 +1301,7 @@ def _normalize_key(item) -> Path:
         return item
     if isinstance(item, str):
         return tuple(item.split("/")) if "/" in item else item
-    raise TypeError(
-        f"Log keys must be str, tuple, or ScalarHook — got {type(item).__name__}"
-    )
+    raise TypeError(f"Log keys must be str, tuple, or ScalarHook — got {type(item).__name__}")
 
 
 def _collect_keys(items) -> list[Path]:

@@ -25,7 +25,6 @@ Usage::
 from __future__ import annotations
 
 import ssl
-import urllib.request
 from pathlib import Path
 
 import numpy as np
@@ -80,8 +79,7 @@ class RevMD17Source:
     ) -> None:
         if molecule not in _MOLECULES:
             raise ValueError(
-                f"Unknown revMD17 molecule '{molecule}'. "
-                f"Available: {sorted(_MOLECULES)}"
+                f"Unknown revMD17 molecule '{molecule}'. Available: {sorted(_MOLECULES)}"
             )
         self.root = Path(root)
         self.molecule = molecule

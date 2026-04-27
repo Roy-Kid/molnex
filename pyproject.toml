@@ -91,6 +91,12 @@ invalid-return-type = "warn"
 invalid-method-override = "warn"
 # invalid-assignment: intentional ssl context bypass for dataset downloading
 invalid-assignment = "warn"
+# unsupported-operator: nn.Buffer / cuequivariance ops narrow imprecisely; runtime is fine
+unsupported-operator = "warn"
+# too-many-positional-arguments: cuequivariance Irrep ctor positional API not in stubs
+too-many-positional-arguments = "warn"
+# call-top-callable: torch lazy generators / dataloaders typed as object in stubs
+call-top-callable = "warn"
 
 [tool.ty.environment]
 python-version = "3.12"

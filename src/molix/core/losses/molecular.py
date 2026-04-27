@@ -31,7 +31,6 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-
 __all__ = ["energy_mse", "energy_force_mse"]
 
 
@@ -91,7 +90,9 @@ def energy_force_mse(
         ``loss_fn(preds, batch) -> Tensor``.
     """
     energy_fn = energy_mse(
-        energy_target_key, pred_key=energy_pred_key, reduction=reduction,
+        energy_target_key,
+        pred_key=energy_pred_key,
+        reduction=reduction,
     )
     mse_f = nn.MSELoss(reduction=reduction)
 

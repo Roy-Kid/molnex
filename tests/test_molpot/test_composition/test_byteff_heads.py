@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import pytest
 import torch
+from tests.utils import assert_compile_compatible
 
 from molpot.composition.heads import (
-    RepulsionParameterHead,
-    ChargeTransferParameterHead,
     ChargeHead,
+    ChargeTransferParameterHead,
+    RepulsionParameterHead,
     TSScalingHead,
 )
 from molpot.composition.multi_head import MultiHead
-
-from tests.utils import assert_compile_compatible
 
 
 @pytest.fixture
@@ -29,6 +28,7 @@ def batch():
 # ---------------------------------------------------------------------------
 # RepulsionParameterHead
 # ---------------------------------------------------------------------------
+
 
 class TestRepulsionParameterHead:
     def test_output_keys_and_shapes(self, node_features):
@@ -60,6 +60,7 @@ class TestRepulsionParameterHead:
 # ChargeTransferParameterHead
 # ---------------------------------------------------------------------------
 
+
 class TestChargeTransferParameterHead:
     def test_output_keys_and_shapes(self, node_features):
         head = ChargeTransferParameterHead(feature_dim=16)
@@ -83,6 +84,7 @@ class TestChargeTransferParameterHead:
 # ---------------------------------------------------------------------------
 # ChargeHead
 # ---------------------------------------------------------------------------
+
 
 class TestChargeHead:
     def test_output_shape(self, node_features, batch):
@@ -117,7 +119,9 @@ class TestChargeHead:
         out["charge"].sum().backward()
         assert x.grad is not None
 
-    @pytest.mark.xfail(reason="ChargeHead uses scatter for per-graph charge conservation", strict=False)
+    @pytest.mark.xfail(
+        reason="ChargeHead uses scatter for per-graph charge conservation", strict=False
+    )
     def test_compile(self, node_features, batch):
         head = ChargeHead(feature_dim=16)
         assert_compile_compatible(head, node_features, strict=False, batch=batch)
@@ -126,6 +130,7 @@ class TestChargeHead:
 # ---------------------------------------------------------------------------
 # TSScalingHead
 # ---------------------------------------------------------------------------
+
 
 class TestTSScalingHead:
     @pytest.fixture
@@ -169,13 +174,16 @@ class TestTSScalingHead:
 # MultiHead
 # ---------------------------------------------------------------------------
 
+
 class TestMultiHead:
     def test_merges_outputs(self, node_features, batch):
-        multi = MultiHead({
-            "rep": RepulsionParameterHead(feature_dim=16),
-            "ct": ChargeTransferParameterHead(feature_dim=16),
-            "charge": ChargeHead(feature_dim=16),
-        })
+        multi = MultiHead(
+            {
+                "rep": RepulsionParameterHead(feature_dim=16),
+                "ct": ChargeTransferParameterHead(feature_dim=16),
+                "charge": ChargeHead(feature_dim=16),
+            }
+        )
         out = multi(node_features, batch=batch)
         assert "eps_rep" in out
         assert "lam_rep" in out
@@ -184,10 +192,12 @@ class TestMultiHead:
         assert "charge" in out
 
     def test_duplicate_key_raises(self, node_features):
-        multi = MultiHead({
-            "a": RepulsionParameterHead(feature_dim=16),
-            "b": RepulsionParameterHead(feature_dim=16),
-        })
+        multi = MultiHead(
+            {
+                "a": RepulsionParameterHead(feature_dim=16),
+                "b": RepulsionParameterHead(feature_dim=16),
+            }
+        )
         with pytest.raises(ValueError, match="Duplicate key"):
             multi(node_features)
 
@@ -197,24 +207,30 @@ class TestMultiHead:
 
     def test_with_ts_head(self, node_features):
         Z = torch.tensor([1, 6, 8, 1, 6], dtype=torch.long)
-        multi = MultiHead({
-            "ts": TSScalingHead(
-                feature_dim=16,
-                c6_free=torch.rand(10) * 10,
-                alpha_free=torch.rand(10) * 5,
-                r_star_free=torch.rand(10) * 2 + 1.0,
-            ),
-        })
+        multi = MultiHead(
+            {
+                "ts": TSScalingHead(
+                    feature_dim=16,
+                    c6_free=torch.rand(10) * 10,
+                    alpha_free=torch.rand(10) * 5,
+                    r_star_free=torch.rand(10) * 2 + 1.0,
+                ),
+            }
+        )
         out = multi(node_features, Z=Z)
         assert "c6" in out
         assert "alpha" in out
         assert "r_star" in out
 
-    @pytest.mark.xfail(reason="MultiHead may include ChargeHead scatter; graph breaks possible", strict=False)
+    @pytest.mark.xfail(
+        reason="MultiHead may include ChargeHead scatter; graph breaks possible", strict=False
+    )
     def test_compile(self, node_features, batch):
-        multi = MultiHead({
-            "rep": RepulsionParameterHead(feature_dim=16),
-            "ct": ChargeTransferParameterHead(feature_dim=16),
-            "charge": ChargeHead(feature_dim=16),
-        })
+        multi = MultiHead(
+            {
+                "rep": RepulsionParameterHead(feature_dim=16),
+                "ct": ChargeTransferParameterHead(feature_dim=16),
+                "charge": ChargeHead(feature_dim=16),
+            }
+        )
         assert_compile_compatible(multi, node_features, strict=False, batch=batch)

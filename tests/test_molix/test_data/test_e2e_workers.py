@@ -78,22 +78,23 @@ def test_mmap_dataset_with_num_workers_4(tmp_path):
 
     schema = TargetSchema(graph_level=frozenset({"U0"}), atom_level=frozenset())
     dm = DataModule(
-        train, val,
+        train,
+        val,
         target_schema=schema,
         batch_size=4,
-        num_workers=4,           # triggers forkserver path
-        pin_memory=False,        # avoid CUDA on CI
+        num_workers=4,  # triggers forkserver path
+        pin_memory=False,  # avoid CUDA on CI
         prefetch_factor=2,
     )
 
     seen_batches = 0
     for batch in dm.train_dataloader():
         assert isinstance(batch, GraphBatch)
-        assert batch["atoms", "Z"].shape[0] == 4 * 4   # 4 mols × 4 atoms each
+        assert batch["atoms", "Z"].shape[0] == 4 * 4  # 4 mols × 4 atoms each
         assert batch["graphs", "U0"].shape == (4,)
         assert batch["edges", "edge_index"].shape[1] == 2
         seen_batches += 1
-    assert seen_batches == 3   # 12 / 4
+    assert seen_batches == 3  # 12 / 4
 
 
 def test_collate_picklable_with_batch_tasks(tmp_path):
@@ -109,8 +110,7 @@ def test_collate_picklable_with_batch_tasks(tmp_path):
     train, val = ds.split(ratio=0.5)
 
     schema = TargetSchema(graph_level=frozenset({"U0"}), atom_level=frozenset())
-    dm = DataModule(train, val, target_schema=schema, batch_size=2,
-                    num_workers=0, pin_memory=False)
+    dm = DataModule(train, val, target_schema=schema, batch_size=2, num_workers=0, pin_memory=False)
 
     fn = dm._make_collate_fn()
-    pickle.loads(pickle.dumps(fn))   # must not raise
+    pickle.loads(pickle.dumps(fn))  # must not raise

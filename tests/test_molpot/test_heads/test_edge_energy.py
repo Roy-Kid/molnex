@@ -11,9 +11,9 @@ from molpot.heads import EdgeEnergyHead
 
 def _stub_batch(*, n_atoms=3, n_edges=6, feat_dim=8):
     torch.manual_seed(0)
-    edge_index = torch.tensor(
-        [[0, 1], [1, 0], [1, 2], [2, 1], [0, 2], [2, 0]], dtype=torch.long
-    )[:n_edges]
+    edge_index = torch.tensor([[0, 1], [1, 0], [1, 2], [2, 1], [0, 2], [2, 0]], dtype=torch.long)[
+        :n_edges
+    ]
     atoms = AtomData(
         Z=torch.tensor([1, 6, 8][:n_atoms]),
         pos=torch.randn(n_atoms, 3),
@@ -33,17 +33,13 @@ def _stub_batch(*, n_atoms=3, n_edges=6, feat_dim=8):
 
 class TestShape:
     def test_returns_per_graph_energy(self):
-        head = EdgeEnergyHead(
-            input_dim=8, hidden_dim=4, avg_num_neighbors=3.0
-        )
+        head = EdgeEnergyHead(input_dim=8, hidden_dim=4, avg_num_neighbors=3.0)
         out = head(_stub_batch())
         assert set(out.keys()) == {"energy"}
         assert out["energy"].shape == (1,)
 
     def test_custom_out_key(self):
-        head = EdgeEnergyHead(
-            input_dim=8, hidden_dim=4, avg_num_neighbors=3.0, out_key="E"
-        )
+        head = EdgeEnergyHead(input_dim=8, hidden_dim=4, avg_num_neighbors=3.0, out_key="E")
         out = head(_stub_batch())
         assert "E" in out
 

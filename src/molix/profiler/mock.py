@@ -126,9 +126,7 @@ class MockBatch:
         # Distribute atoms across graphs (roughly equal split)
         batch_vec = torch.zeros(n_a, dtype=torch.long, device=dev)
         if n_g > 1 and n_a > 0:
-            boundaries = sorted(
-                self._rng.sample(range(1, n_a), min(n_g - 1, n_a - 1))
-            )
+            boundaries = sorted(self._rng.sample(range(1, n_a), min(n_g - 1, n_a - 1)))
             for graph_idx, start in enumerate(boundaries):
                 batch_vec[start:] = graph_idx + 1
 
@@ -165,6 +163,7 @@ class MockBatch:
         Returns:
             Description string.
         """
+
         def _fmt(v: _IntOrRange) -> str:
             return str(v) if isinstance(v, int) else f"{v[0]}–{v[1]}"
 
@@ -215,8 +214,7 @@ class MockSource:
         # Pre-generate atom counts for each sample so source_id is stable
         rng = random.Random(seed)
         self._atom_counts: list[int] = [
-            _resolve(n_atoms) if not isinstance(n_atoms, int) else n_atoms
-            for _ in range(n_samples)
+            _resolve(n_atoms) if not isinstance(n_atoms, int) else n_atoms for _ in range(n_samples)
         ]
         # Per-sample generator seeds for reproducible, independent samples
         self._seeds: list[int] = [rng.randint(0, 2**31) for _ in range(n_samples)]

@@ -17,11 +17,17 @@ class _SimpleModel(nn.Module):
         return self.linear(x)
 
 
+def _mse_loss(preds, batch):
+    return ((preds - batch["targets"]["y"]) ** 2).mean()
+
+
+def _sgd_factory(params):
+    return torch.optim.SGD(params, lr=1e-3)
+
+
 def _make_trainer():
     model = _SimpleModel()
-    loss_fn = lambda preds, batch: ((preds - batch["targets"]["y"]) ** 2).mean()
-    optimizer_factory = lambda params: torch.optim.SGD(params, lr=1e-3)
-    return Trainer(model, loss_fn, optimizer_factory), model
+    return Trainer(model, _mse_loss, _sgd_factory), model
 
 
 def test_compile_returns_self():
@@ -44,8 +50,9 @@ def test_compile_checkpoint_sync():
 
 
 def test_compile_chaining():
+    def loss_fn(preds, batch):
+        return preds.mean()
+
     model = _SimpleModel()
-    loss_fn = lambda preds, batch: preds.mean()
-    optimizer_factory = lambda params: torch.optim.SGD(params, lr=1e-3)
-    trainer = Trainer(model, loss_fn, optimizer_factory).compile()
+    trainer = Trainer(model, loss_fn, _sgd_factory).compile()
     assert trainer._checkpoint.model is trainer.model

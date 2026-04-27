@@ -58,9 +58,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, ClassVar
 
-
 import torch
-
 
 __all__ = ["PackedCache"]
 
@@ -68,10 +66,20 @@ __all__ = ["PackedCache"]
 _KEY_HEX_LEN = 12
 
 # Reserved keys in the packed payload — never collide with user sample keys.
-_RESERVED_TOP_KEYS = frozenset({
-    "format_version", "n_samples", "atom_ptr", "edge_ptr",
-    "atoms", "edges", "graphs", "scalars", "schema", "task_states",
-})
+_RESERVED_TOP_KEYS = frozenset(
+    {
+        "format_version",
+        "n_samples",
+        "atom_ptr",
+        "edge_ptr",
+        "atoms",
+        "edges",
+        "graphs",
+        "scalars",
+        "schema",
+        "task_states",
+    }
+)
 
 
 class PackedCache:
@@ -227,7 +235,7 @@ class PackedCache:
         try:
             torch.save(payload, tmp)
             _fsync_file(tmp)
-            os.replace(tmp, self._sink)      # atomic on POSIX (incl. same-mount NFS)
+            os.replace(tmp, self._sink)  # atomic on POSIX (incl. same-mount NFS)
         except BaseException:
             try:
                 tmp.unlink(missing_ok=True)
@@ -324,7 +332,10 @@ def _pack_samples(samples: list[dict]) -> dict[str, Any]:
             "format_version": PackedCache.FORMAT_VERSION,
             "n_samples": 0,
             "schema": {},
-            "atoms": {}, "edges": {}, "graphs": {}, "scalars": {},
+            "atoms": {},
+            "edges": {},
+            "graphs": {},
+            "scalars": {},
         }
 
     flats = [_flatten(s) for s in samples]
@@ -440,9 +451,7 @@ def _flatten(d: Mapping[str, Any], prefix: str = "") -> dict[str, Any]:
     for k, v in d.items():
         key = f"{prefix}{k}"
         if key in _RESERVED_TOP_KEYS and not prefix:
-            raise ValueError(
-                f"Sample key {k!r} collides with a reserved packed-cache key."
-            )
+            raise ValueError(f"Sample key {k!r} collides with a reserved packed-cache key.")
         if isinstance(v, Mapping):
             out.update(_flatten(v, prefix=f"{key}."))
         else:
@@ -490,8 +499,7 @@ def _infer_schema_across(
             for i, f in enumerate(flats):
                 if not isinstance(f[k], (int, float, bool, str)):
                     raise TypeError(
-                        f"Key {k!r}: sample 0 is {typ} but sample {i} is "
-                        f"{type(f[k]).__name__}"
+                        f"Key {k!r}: sample 0 is {typ} but sample {i} is {type(f[k]).__name__}"
                     )
             schema[k] = ("scalar", typ)
             continue
@@ -509,8 +517,7 @@ def _infer_schema_across(
             t = f[k]
             if not isinstance(t, torch.Tensor):
                 raise TypeError(
-                    f"Key {k!r}: sample 0 is Tensor but sample {i} is "
-                    f"{type(t).__name__}"
+                    f"Key {k!r}: sample 0 is Tensor but sample {i} is {type(t).__name__}"
                 )
             dtypes.add(t.dtype)
             if t.ndim == 0:
@@ -523,28 +530,22 @@ def _infer_schema_across(
             raise ValueError(f"Key {k!r}: dtype varies across samples: {dtypes}")
         dtype = next(iter(dtypes))
 
-        tracks_atoms = (
-            has_atom_ref and all(s0 == na for s0, na in zip(shape0s, n_atoms))
-        )
-        tracks_edges = (
-            has_edge_ref and all(s0 == ne for s0, ne in zip(shape0s, n_edges))
-        )
+        tracks_atoms = has_atom_ref and all(s0 == na for s0, na in zip(shape0s, n_atoms))
+        tracks_edges = has_edge_ref and all(s0 == ne for s0, ne in zip(shape0s, n_edges))
         # Prefer atom classification when both track (can happen if n_atoms == n_edges
         # holds across every sample, e.g. in degenerate cases).
         if tracks_atoms:
             rest_set = set(shape_rests)
             if len(rest_set) != 1:
                 raise ValueError(
-                    f"Key {k!r}: leading dim tracks n_atoms but trailing "
-                    f"shape varies: {rest_set}"
+                    f"Key {k!r}: leading dim tracks n_atoms but trailing shape varies: {rest_set}"
                 )
             schema[k] = ("atom", dtype, shape_rests[0])
         elif tracks_edges:
             rest_set = set(shape_rests)
             if len(rest_set) != 1:
                 raise ValueError(
-                    f"Key {k!r}: leading dim tracks n_edges but trailing "
-                    f"shape varies: {rest_set}"
+                    f"Key {k!r}: leading dim tracks n_edges but trailing shape varies: {rest_set}"
                 )
             schema[k] = ("edge", dtype, shape_rests[0])
         else:

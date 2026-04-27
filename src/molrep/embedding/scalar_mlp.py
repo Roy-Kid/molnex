@@ -52,9 +52,7 @@ class ScalarLinearLayer(nn.Module):
         self.register_buffer(
             "alpha", torch.tensor(float(alpha), dtype=config.ftype), persistent=False
         )
-        self.weight = nn.Parameter(
-            torch.empty((in_features, out_features), dtype=config.ftype)
-        )
+        self.weight = nn.Parameter(torch.empty((in_features, out_features), dtype=config.ftype))
         nn.init.uniform_(self.weight, -math.sqrt(3), math.sqrt(3))
         if bias:
             self.bias = nn.Parameter(torch.zeros(out_features, dtype=config.ftype))
@@ -104,14 +102,12 @@ class ScalarMLPFunction(nn.Module):
     ) -> None:
         super().__init__()
         if hidden_layers_depth != 0:
-            assert hidden_layers_depth > 0 and hidden_layers_width is not None and (
-                hidden_layers_width > 0
+            assert (
+                hidden_layers_depth > 0
+                and hidden_layers_width is not None
+                and (hidden_layers_width > 0)
             ), "hidden_layers_width must be a positive int when depth > 0"
-        hidden_dims = (
-            [hidden_layers_width] * hidden_layers_depth
-            if hidden_layers_depth > 0
-            else []
-        )
+        hidden_dims = [hidden_layers_width] * hidden_layers_depth if hidden_layers_depth > 0 else []
         self.dims = [input_dim, *hidden_dims, output_dim]
         self.num_layers = len(self.dims) - 1
         assert self.num_layers >= 1
@@ -119,11 +115,7 @@ class ScalarMLPFunction(nn.Module):
 
         layers: list[nn.Module] = []
         for layer_idx, (h_in, h_out) in enumerate(zip(self.dims, self.dims[1:])):
-            gain = (
-                1.0
-                if (nonlinearity is None or layer_idx == 0)
-                else math.sqrt(2.0)
-            )
+            gain = 1.0 if (nonlinearity is None or layer_idx == 0) else math.sqrt(2.0)
             layers.append(
                 ScalarLinearLayer(
                     in_features=h_in,

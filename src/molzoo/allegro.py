@@ -57,7 +57,6 @@ from molrep.interaction.tensor_product import (
     sh_irreps_from_l_max,
 )
 
-
 __all__ = ["Allegro", "AllegroSpec"]
 
 
@@ -93,13 +92,11 @@ def _make_weighted_channels(
     chunks: list[torch.Tensor] = []
     sh_pos = 0
     for r, d_r in enumerate(sh_irrep_dims):
-        sh_block = sh[..., sh_pos : sh_pos + d_r]                       # (E, d_r)
-        w_block = weights[..., r * mul : (r + 1) * mul]                 # (E, mul)
+        sh_block = sh[..., sh_pos : sh_pos + d_r]  # (E, d_r)
+        w_block = weights[..., r * mul : (r + 1) * mul]  # (E, mul)
         # ir_mul: m axis outer, channel axis inner → (E, d_r, mul) → flatten
         chunks.append(
-            (sh_block.unsqueeze(-1) * w_block.unsqueeze(-2)).reshape(
-                *sh.shape[:-1], d_r * mul
-            )
+            (sh_block.unsqueeze(-1) * w_block.unsqueeze(-2)).reshape(*sh.shape[:-1], d_r * mul)
         )
         sh_pos += d_r
     return torch.cat(chunks, dim=-1)
@@ -188,22 +185,16 @@ def _allegro_uuu_descriptor(
 
     return cue.EquivariantPolynomial(
         [
-            cue.IrrepsAndLayout(
-                irreps_in.new_scalars(d.operands[0].size), cue.ir_mul
-            ),
+            cue.IrrepsAndLayout(irreps_in.new_scalars(d.operands[0].size), cue.ir_mul),
             cue.IrrepsAndLayout(irreps_in, cue.ir_mul),
-            cue.IrrepsAndLayout(
-                cue.Irreps(G, [(u, ir) for _, ir in irreps_sh]), cue.ir_mul
-            ),
+            cue.IrrepsAndLayout(cue.Irreps(G, [(u, ir) for _, ir in irreps_sh]), cue.ir_mul),
         ],
         [cue.IrrepsAndLayout(irreps_out, cue.ir_mul)],
         cue.SegmentedPolynomial.eval_last_operand(d),
     )
 
 
-def _tp_path_exists(
-    irreps_in1: cue.Irreps, irreps_in2: cue.Irreps, ir_out: cue.Irrep
-) -> bool:
+def _tp_path_exists(irreps_in1: cue.Irreps, irreps_in2: cue.Irreps, ir_out: cue.Irrep) -> bool:
     """Port of ``nequip.nn.tp_path_exists`` — does any CG path land in ``ir_out``?"""
     for _, ir1 in irreps_in1:
         for _, ir2 in irreps_in2:
@@ -254,11 +245,7 @@ def _build_layer_irreps(
         arg = tps_irreps[-1]
         pruned = cue.Irreps(
             G,
-            [
-                (1, ir)
-                for _, ir in allowed
-                if _tp_path_exists(arg, env_embed_irreps, ir)
-            ],
+            [(1, ir) for _, ir in allowed if _tp_path_exists(arg, env_embed_irreps, ir)],
         )
         tps_irreps.append(pruned)
 
@@ -277,9 +264,7 @@ def _build_layer_irreps(
         out_irreps_iter = kept_irreps
 
     if len(new_tps_irreps) != len(tps_irreps):
-        raise RuntimeError(
-            "internal: backward pruning produced wrong number of layers"
-        )
+        raise RuntimeError("internal: backward pruning produced wrong number of layers")
     return list(reversed(new_tps_irreps))
 
 
@@ -427,9 +412,9 @@ class Allegro(TensorDictModuleBase):
 
         # === bessel × cutoff (BesselEdgeLengthEncoding) ===
         # Reference: bessel = sinc(n·r/r_max) · n; weights are non-trainable.
-        bessel_n = torch.linspace(
-            1.0, num_bessel, steps=num_bessel, dtype=config.ftype
-        ).unsqueeze(0)  # (1, num_bessel)
+        bessel_n = torch.linspace(1.0, num_bessel, steps=num_bessel, dtype=config.ftype).unsqueeze(
+            0
+        )  # (1, num_bessel)
         self.register_buffer("bessel_n", bessel_n, persistent=False)
         self.cutoff_fn = PolynomialCutoff(r_cut=r_max, exponent=poly_p)
 
@@ -487,13 +472,14 @@ class Allegro(TensorDictModuleBase):
         # in earlier layers that cannot eventually feed the final scalar.
         sh_irreps = cue.Irreps(O3, sh_irreps_from_l_max(l_max))  # mul=1
         tps_irreps_mul1 = _build_layer_irreps(
-            sh_irreps, num_layers, O3,
+            sh_irreps,
+            num_layers,
+            O3,
             last_layer_keep_tensors=self.expose_tensor_track,
         )
         # Inflate to mul=u for the actual TP construction.
         tps_irreps_mu: list[cue.Irreps] = [
-            cue.Irreps(O3, [(num_tensor_features, ir) for _, ir in irr])
-            for irr in tps_irreps_mul1
+            cue.Irreps(O3, [(num_tensor_features, ir) for _, ir in irr]) for irr in tps_irreps_mul1
         ]
         # Layer 0's LHS = V_0, which has the full SH irreps. Backward
         # pruning is a no-op at depth 0 for typical configs (env spans
@@ -548,10 +534,7 @@ class Allegro(TensorDictModuleBase):
         # the last layer).
         self.latents = nn.ModuleList()
         for layer_idx in range(num_layers):
-            latent_input_dim = (
-                num_scalar_features * (layer_idx + 1)
-                + n_scalar_outs[layer_idx]
-            )
+            latent_input_dim = num_scalar_features * (layer_idx + 1) + n_scalar_outs[layer_idx]
             latent_output_dim = num_scalar_features + (
                 self._env_weight_numel if layer_idx < num_layers - 1 else 0
             )
@@ -576,23 +559,22 @@ class Allegro(TensorDictModuleBase):
         bond_diff = td["edges", "bond_diff"]
         edge_index = td["edges", "edge_index"]
         n_nodes: int = int(Z.shape[0])
-        n_edges: int = int(bond_dist.shape[0])
         src = edge_index[:, 0]
         dst = edge_index[:, 1]
 
         # === 1. Bessel × polynomial cutoff (BesselEdgeLengthEncoding) ===
-        x_norm = (bond_dist / self.r_max).unsqueeze(-1)            # (E, 1)
+        x_norm = (bond_dist / self.r_max).unsqueeze(-1)  # (E, 1)
         # torch.sinc(z) = sin(πz)/(πz); sinc(n·r/r_max) · n.
         bessel = torch.sinc(x_norm * self.bessel_n) * self.bessel_n  # (E, num_bessel)
-        edge_cutoff = self.cutoff_fn(bond_dist)                     # (E,)
-        edge_radial = bessel * edge_cutoff.unsqueeze(-1)            # (E, num_bessel)
+        edge_cutoff = self.cutoff_fn(bond_dist)  # (E,)
+        edge_radial = bessel * edge_cutoff.unsqueeze(-1)  # (E, num_bessel)
 
         # === 2. ProductTypeEmbedding: type_embed × basis_linear(bessel) ===
         # This is the ENTIRE two-body scalar embedding (= reference's
         # ``EDGE_EMBEDDING_KEY`` after ``TwoBodyBesselScalarEmbed``).
         type_embed = torch.cat(
             [self.center_embed(Z[src]), self.neighbor_embed(Z[dst])], dim=-1
-        )                                                            # (E, type_embed_dim)
+        )  # (E, type_embed_dim)
         twobody_scalar_embed = type_embed * self.basis_linear(edge_radial)
         # twobody_scalar_embed: (E, type_embed_dim)
 
@@ -601,14 +583,14 @@ class Allegro(TensorDictModuleBase):
         # (cuEquivariance kernel). NeighborList guarantees ``bond_dist > 0``
         # (self-edges excluded by ``get_neighbor_pairs``), so no ``+ε`` shim
         # is needed; passing ``bond_diff`` directly saves one division per edge.
-        tensor_basis = self.spherical_harmonics(bond_diff)           # (E, irreps_sh_dim)
-        v0_weights = self.env_embed_linear(twobody_scalar_embed)     # (E, weight_numel)
+        tensor_basis = self.spherical_harmonics(bond_diff)  # (E, irreps_sh_dim)
+        v0_weights = self.env_embed_linear(twobody_scalar_embed)  # (E, weight_numel)
         tensor_features = _make_weighted_channels(
             tensor_basis,
             v0_weights,
             mul=self.num_tensor_features,
             sh_irrep_dims=self._sh_irrep_dims,
-        )                                                            # (E, irreps_dim · u) ir_mul
+        )  # (E, irreps_dim · u) ir_mul
 
         # === 4. First-layer env-embed projection ===
         projection = self.first_layer_env_embed_projection(twobody_scalar_embed)
@@ -628,7 +610,7 @@ class Allegro(TensorDictModuleBase):
                 env_w,
                 mul=self.num_tensor_features,
                 sh_irrep_dims=self._sh_irrep_dims,
-            )                                                        # (E, irreps_sh_dim · u)
+            )  # (E, irreps_sh_dim · u)
 
             # (b) scatter to nodes, then /√⟨|N|⟩
             env_w_scatter = torch.zeros(
@@ -637,9 +619,7 @@ class Allegro(TensorDictModuleBase):
                 dtype=env_w_edges.dtype,
                 device=env_w_edges.device,
             )
-            env_w_scatter.scatter_add_(
-                0, src.unsqueeze(-1).expand_as(env_w_edges), env_w_edges
-            )
+            env_w_scatter.scatter_add_(0, src.unsqueeze(-1).expand_as(env_w_edges), env_w_edges)
             env_w_scatter = env_w_scatter * self.avg_num_neighbors_inv_sqrt
 
             # (c) per-channel uuu TP, gathering env_w_scatter per-edge by source.
@@ -649,12 +629,12 @@ class Allegro(TensorDictModuleBase):
 
             # (d) extract L=0 invariants (first ``u`` components in ir_mul,
             # since ``ir_out``'s first irrep is always 0e).
-            scalars = new_tensor[..., : n_scalar]                    # (E, u)
+            scalars = new_tensor[..., :n_scalar]  # (E, u)
 
             # (e) latent MLP over DenseNet input
             latents_out = latent(
                 torch.cat(accumulated + [scalars], dim=-1)
-            )                                                        # (E, F + weight_numel?)
+            )  # (E, F + weight_numel?)
 
             # (f) split into new scalar feature and (optionally) next env_w
             new_scalar = latents_out[..., : self.num_scalar_features]

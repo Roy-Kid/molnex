@@ -42,7 +42,6 @@ from typing import Any
 from molix.data.cache import PackedCache
 from molix.data.task import BatchTask, DatasetTask, Runnable, SampleTask
 
-
 __all__ = ["TaskEntry", "PipelineSpec", "Pipeline"]
 
 
@@ -64,9 +63,7 @@ class TaskEntry:
             return task.execute(data)
         if callable(task):
             return task(data)
-        raise TypeError(
-            f"Task {self.name!r} is neither Runnable nor callable: {type(task)}"
-        )
+        raise TypeError(f"Task {self.name!r} is neither Runnable nor callable: {type(task)}")
 
 
 class PipelineSpec:
@@ -313,9 +310,7 @@ class PipelineSpec:
         if _is_primary_rank():
             sink.parent.mkdir(parents=True, exist_ok=True)
             if overwrite or not packed.is_ready():
-                self.build_cache(
-                    source, packed, fit_source=fit_source, overwrite=overwrite
-                )
+                self.build_cache(source, packed, fit_source=fit_source, overwrite=overwrite)
         else:
             packed.wait_until_ready()
         return packed
@@ -387,8 +382,7 @@ def _validate_task(task: Any) -> None:
     if callable(task):
         return
     raise TypeError(
-        f"Task must be a SampleTask/DatasetTask/BatchTask or callable, "
-        f"got {type(task).__name__}"
+        f"Task must be a SampleTask/DatasetTask/BatchTask or callable, got {type(task).__name__}"
     )
 
 

@@ -60,8 +60,7 @@ class NeighborList(SampleTask):
     @property
     def task_id(self) -> str:
         return (
-            f"nlist:cut={self.cutoff}:max={self.max_num_pairs}"
-            f":pbc={self.pbc}:sym={self.symmetry}"
+            f"nlist:cut={self.cutoff}:max={self.max_num_pairs}:pbc={self.pbc}:sym={self.symmetry}"
         )
 
     def execute(self, data: dict) -> dict:

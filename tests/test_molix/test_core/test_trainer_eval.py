@@ -4,10 +4,9 @@ import pytest
 import torch
 import torch.nn as nn
 
+from molix.core.hooks import BaseHook
 from molix.core.state import TrainState
 from molix.core.trainer import Trainer
-from molix.core.hooks import BaseHook
-from molix.core.steps import DefaultTrainStep, DefaultEvalStep, extract_model_inputs
 
 
 def test_trainstate_counter_init():
@@ -21,7 +20,7 @@ def test_trainstate_counter_increment():
     state = TrainState()
     state.steps_since_last_eval += 1
     assert state.steps_since_last_eval == 1
-    
+
     state.steps_since_last_eval += 1
     assert state.steps_since_last_eval == 2
 
@@ -56,13 +55,14 @@ def test_hook_on_eval_step_complete_exists():
 
 def test_hook_on_eval_step_complete_callable():
     """Verify on_eval_step_complete can be overridden."""
+
     class CustomHook(BaseHook):
         def __init__(self):
             self.called = False
-        
+
         def on_eval_step_complete(self, trainer, state):
             self.called = True
-    
+
     hook = CustomHook()
     hook.on_eval_step_complete(None, TrainState())
     assert hook.called is True
@@ -71,7 +71,7 @@ def test_hook_on_eval_step_complete_callable():
 def test_trainer_eval_every_n_steps_disabled_by_default():
     """Verify step-based eval logic is disabled when eval_every_n_steps=None."""
     state = TrainState()
-    trainer = _make_trainer(eval_every_n_steps=None)
+    _make_trainer(eval_every_n_steps=None)
 
     # Simulate multiple steps
     for _ in range(100):
@@ -87,6 +87,7 @@ def test_trainer_eval_every_n_steps_disabled_by_default():
 # ---------------------------------------------------------------------------
 # Fixtures for max_steps tests
 # ---------------------------------------------------------------------------
+
 
 class _SimpleModel(nn.Module):
     def __init__(self):
@@ -139,6 +140,7 @@ def _make_trainer(**kwargs):
 # max_steps / max_epochs validation
 # ---------------------------------------------------------------------------
 
+
 def test_train_requires_at_least_one_limit():
     """ValueError when neither max_epochs nor max_steps is set."""
     trainer = _make_trainer()
@@ -166,6 +168,7 @@ def test_train_rejects_non_positive_max_steps():
 # max_epochs only (existing behaviour)
 # ---------------------------------------------------------------------------
 
+
 def test_train_max_epochs_only():
     """Training with only max_epochs completes the expected epochs."""
     dm = _MockDataModule(batches_per_epoch=3)
@@ -178,6 +181,7 @@ def test_train_max_epochs_only():
 # ---------------------------------------------------------------------------
 # max_steps only
 # ---------------------------------------------------------------------------
+
 
 def test_train_max_steps_only():
     """Training with only max_steps stops at the step limit."""
@@ -192,6 +196,7 @@ def test_train_max_steps_only():
 # ---------------------------------------------------------------------------
 # Both limits — whichever comes first
 # ---------------------------------------------------------------------------
+
 
 def test_train_both_limits_epochs_first():
     """When max_epochs is the binding constraint, stop by epochs."""

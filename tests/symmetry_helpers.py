@@ -119,7 +119,11 @@ def permute_graph(batch: GraphBatch, perm: torch.Tensor) -> GraphBatch:
     edge_index = inv_perm[batch["edges", "edge_index"]]
     extras = _extract_graph_extras(batch)
     return make_graph_batch(
-        pos=pos, Z=Z, edge_index=edge_index, batch=batch_idx, graphs=extras,
+        pos=pos,
+        Z=Z,
+        edge_index=edge_index,
+        batch=batch_idx,
+        graphs=extras,
     )
 
 
@@ -153,7 +157,5 @@ def _extract_graph_extras(batch: GraphBatch) -> dict[str, torch.Tensor] | None:
     if "graphs" not in batch.keys():
         return None
     graphs = batch["graphs"]
-    extras = {
-        k: graphs[k] for k in graphs.keys() if k not in _RESERVED_GRAPH_KEYS
-    }
+    extras = {k: graphs[k] for k in graphs.keys() if k not in _RESERVED_GRAPH_KEYS}
     return extras or None

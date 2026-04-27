@@ -34,7 +34,6 @@ from molix.data.dataset import CachedDataset
 from molix.data.pipeline import PipelineSpec
 from molix.profiler._utils import TimingStat, ValueStat, _fmt_table
 
-
 # ---------------------------------------------------------------------------
 # Result
 # ---------------------------------------------------------------------------
@@ -71,10 +70,7 @@ class DataLoaderResult:
     def print_report(self) -> None:
         """Print a human-readable throughput report to stdout."""
         s = self.load_time
-        print(
-            f"\nDataLoader Profile  "
-            f"(n={self.n_batches} batches, num_workers={self.num_workers})"
-        )
+        print(f"\nDataLoader Profile  (n={self.n_batches} batches, num_workers={self.num_workers})")
         print(f"Data: {self.data_description}")
         print("─" * 72)
 
@@ -245,9 +241,7 @@ class DataLoaderProfiler:
             t0 = time.perf_counter()
 
         if not load_times_ms:
-            raise RuntimeError(
-                f"Not enough batches in DataLoader: needed {total}, got fewer."
-            )
+            raise RuntimeError(f"Not enough batches in DataLoader: needed {total}, got fewer.")
 
         timing = TimingStat.from_list(load_times_ms)
         mean_load_s = timing.mean_ms / 1000.0
@@ -258,8 +252,12 @@ class DataLoaderProfiler:
             load_time=timing,
             throughput_graphs_per_sec=mean_graphs / mean_load_s if mean_load_s > 0 else 0.0,
             throughput_atoms_per_sec=mean_atoms / mean_load_s if mean_load_s > 0 else 0.0,
-            batch_atom_stats=ValueStat.from_list(atom_counts) if atom_counts else ValueStat(0, 0, 0, 0),
-            batch_graph_stats=ValueStat.from_list(graph_counts) if graph_counts else ValueStat(0, 0, 0, 0),
+            batch_atom_stats=ValueStat.from_list(atom_counts)
+            if atom_counts
+            else ValueStat(0, 0, 0, 0),
+            batch_graph_stats=ValueStat.from_list(graph_counts)
+            if graph_counts
+            else ValueStat(0, 0, 0, 0),
             n_batches=len(load_times_ms),
             num_workers=self.num_workers,
             batch_size=self.batch_size,

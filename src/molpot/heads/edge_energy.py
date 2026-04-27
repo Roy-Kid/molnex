@@ -69,9 +69,7 @@ class EdgeEnergyHead(nn.Module):
     ):
         super().__init__()
         if avg_num_neighbors <= 0.0:
-            raise ValueError(
-                f"avg_num_neighbors must be positive; got {avg_num_neighbors}"
-            )
+            raise ValueError(f"avg_num_neighbors must be positive; got {avg_num_neighbors}")
         # Two-layer purely-linear readout, matching mir-group/allegro::minimal.yaml
         # (``edge_eng_mlp_nonlinearity=null``, ``edge_eng_mlp_latent_dimensions=[128]``).
         # ``ScalarMLPFunction(nonlinearity=None)`` skips activation insertion and
@@ -106,10 +104,8 @@ class EdgeEnergyHead(nn.Module):
 
         edge_index = batch["edges", "edge_index"]
         n_nodes = int(batch["atoms", "Z"].shape[0])
-        node_e = torch.zeros(
-            n_nodes, dtype=edge_e.dtype, device=edge_e.device
-        )
-        node_e.scatter_add_(0, edge_index[:, 0], edge_e)              # (N,)
+        node_e = torch.zeros(n_nodes, dtype=edge_e.dtype, device=edge_e.device)
+        node_e.scatter_add_(0, edge_index[:, 0], edge_e)  # (N,)
         # /√2 — mirrors mir-group/allegro::EdgewiseReduce. Per-source aggregate
         # is double-counted relative to a single-direction sum because dE/dr_i
         # picks up contributions from both dE/dr_ij and dE/dr_ji on every
@@ -118,9 +114,7 @@ class EdgeEnergyHead(nn.Module):
 
         atom_batch = batch["atoms", "batch"]
         n_graphs = batch["graphs"].batch_size[0]
-        energy = torch.zeros(
-            n_graphs, dtype=node_e.dtype, device=node_e.device
-        )
-        energy.scatter_add_(0, atom_batch, node_e)                    # (B,)
+        energy = torch.zeros(n_graphs, dtype=node_e.dtype, device=node_e.device)
+        energy.scatter_add_(0, atom_batch, node_e)  # (B,)
 
         return {self.out_key: energy}

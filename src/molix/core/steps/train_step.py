@@ -57,11 +57,7 @@ class DefaultTrainStep:
         amp_enabled = bool(config["use_amp"])
         amp_dtype = config["amp_dtype"]
 
-        ctx = (
-            torch.amp.autocast(device_type, dtype=amp_dtype)
-            if amp_enabled
-            else nullcontext()
-        )
+        ctx = torch.amp.autocast(device_type, dtype=amp_dtype) if amp_enabled else nullcontext()
         with ctx:
             if isinstance(batch, dict):
                 model_inputs = extract_model_inputs(batch)

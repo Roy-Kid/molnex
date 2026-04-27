@@ -103,9 +103,7 @@ def test_grad_clip_hook_respects_max_norm():
         """Runs after GradClipHook to verify clipping happened."""
 
         def on_after_backward(self, trainer, state):
-            total_norm = torch.nn.utils.clip_grad_norm_(
-                trainer.model.parameters(), float("inf")
-            )
+            total_norm = torch.nn.utils.clip_grad_norm_(trainer.model.parameters(), float("inf"))
             grad_norms_after.append(total_norm.item())
 
     trainer = Trainer(

@@ -21,10 +21,30 @@ config = Config(
 
 
 _PRECISION_PRESETS: dict[str, dict[str, object]] = {
-    "fp32":       {"ftype": torch.float32, "use_amp": False, "amp_dtype": torch.float16,   "matmul_precision": "high"},
-    "fp64":       {"ftype": torch.float64, "use_amp": False, "amp_dtype": torch.float16,   "matmul_precision": "highest"},
-    "fp16-mixed": {"ftype": torch.float32, "use_amp": True,  "amp_dtype": torch.float16,   "matmul_precision": "high"},
-    "bf16-mixed": {"ftype": torch.float32, "use_amp": True,  "amp_dtype": torch.bfloat16,  "matmul_precision": "high"},
+    "fp32": {
+        "ftype": torch.float32,
+        "use_amp": False,
+        "amp_dtype": torch.float16,
+        "matmul_precision": "high",
+    },
+    "fp64": {
+        "ftype": torch.float64,
+        "use_amp": False,
+        "amp_dtype": torch.float16,
+        "matmul_precision": "highest",
+    },
+    "fp16-mixed": {
+        "ftype": torch.float32,
+        "use_amp": True,
+        "amp_dtype": torch.float16,
+        "matmul_precision": "high",
+    },
+    "bf16-mixed": {
+        "ftype": torch.float32,
+        "use_amp": True,
+        "amp_dtype": torch.bfloat16,
+        "matmul_precision": "high",
+    },
 }
 
 
@@ -52,9 +72,7 @@ def set_precision(mode: str) -> None:
     """
     if mode not in _PRECISION_PRESETS:
         supported = ", ".join(sorted(_PRECISION_PRESETS))
-        raise ValueError(
-            f"Unsupported precision mode {mode!r}. Supported modes: {supported}."
-        )
+        raise ValueError(f"Unsupported precision mode {mode!r}. Supported modes: {supported}.")
     preset = _PRECISION_PRESETS[mode]
     for key, value in preset.items():
         config[key] = value

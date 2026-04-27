@@ -112,13 +112,12 @@ def test_log_accepts_slash_string_keys(capsys):
 def test_log_validates_keys_against_advertised_paths():
     """Startup validation rejects keys not advertised by any registered hook
     nor in the built-in set — catches the silent-nan failure mode."""
+
     class _FakeTrainer:
         hooks = []  # no hooks registered → only built-ins are advertised
 
     # ``("train", "loss")`` is a built-in (DefaultTrainStep) — accepted.
-    Log(1, keys=[("train", "loss")]).on_train_start(
-        trainer=_FakeTrainer(), state=TrainState()
-    )
+    Log(1, keys=[("train", "loss")]).on_train_start(trainer=_FakeTrainer(), state=TrainState())
 
     # ``("performance", "step_per_second")`` requires StepSpeedHook —
     # not registered → ValueError.
@@ -311,10 +310,14 @@ def test_metrics_hook_scalar_keys_are_dynamic():
     from molix.core.hooks import MetricsHook
 
     class _FakeMetric:
-        def reset(self): pass
+        def reset(self):
+            pass
 
-    class _MAE(_FakeMetric): pass
-    class _RMSE(_FakeMetric): pass
+    class _MAE(_FakeMetric):
+        pass
+
+    class _RMSE(_FakeMetric):
+        pass
 
     hook = MetricsHook(
         metrics=[_MAE(), _RMSE()],

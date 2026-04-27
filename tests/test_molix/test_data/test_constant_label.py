@@ -19,17 +19,13 @@ class TestConstantLabel:
         t = ConstantLabel(key="total_charge", value=0.0)
         out = t({"Z": torch.tensor([1, 6]), "targets": {"U0": torch.tensor([1.5])}})
         assert "total_charge" in out["targets"]
-        torch.testing.assert_close(
-            out["targets"]["total_charge"], torch.tensor([0.0])
-        )
+        torch.testing.assert_close(out["targets"]["total_charge"], torch.tensor([0.0]))
 
     def test_writes_anion_target(self):
         """Charged-system semantics: value can be any float."""
         t = ConstantLabel(key="total_charge", value=-1.0)
         out = t({"Z": torch.tensor([7, 1, 1, 1]), "targets": {}})
-        torch.testing.assert_close(
-            out["targets"]["total_charge"], torch.tensor([-1.0])
-        )
+        torch.testing.assert_close(out["targets"]["total_charge"], torch.tensor([-1.0]))
 
     def test_does_not_clobber_other_targets(self):
         t = ConstantLabel(key="total_charge", value=0.0)

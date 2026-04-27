@@ -78,7 +78,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from molix import config
 from molix.data.types import GraphBatch
 
-
 # ---------------------------------------------------------------------------
 # Term registry
 # ---------------------------------------------------------------------------
@@ -99,9 +98,7 @@ from molix.data.types import GraphBatch
 # Cartesian / spherical-tensor multiplication for Θ which is tracked
 # separately.
 
-VALID_ENERGY_TERMS: frozenset[str] = frozenset(
-    {"qq", "qm", "mm", "qt", "mt", "tt"}
-)
+VALID_ENERGY_TERMS: frozenset[str] = frozenset({"qq", "qm", "mm", "qt", "mt", "tt"})
 _IMPL_ENERGY_TERMS: frozenset[str] = frozenset({"qq", "qm", "mm"})
 
 # Each term needs a specific subset of moments enabled — ``qm`` for
@@ -138,7 +135,8 @@ def _scalar_mlp(in_dim: int, hidden: Sequence[int], out_dim: int) -> nn.Sequenti
 
 
 def _find_irrep_offset(
-    tensor_irreps: cue.Irreps, target_ir: cue.Irrep,
+    tensor_irreps: cue.Irreps,
+    target_ir: cue.Irrep,
 ) -> int:
     """Locate ``target_ir``'s starting offset in an ``ir_mul`` flat layout.
 
@@ -150,9 +148,7 @@ def _find_irrep_offset(
         if ir == target_ir:
             return offset
         offset += mul * ir.dim
-    raise ValueError(
-        f"tensor_irreps must contain a {target_ir} segment; got {tensor_irreps}."
-    )
+    raise ValueError(f"tensor_irreps must contain a {target_ir} segment; got {tensor_irreps}.")
 
 
 # ---------------------------------------------------------------------------
@@ -204,8 +200,7 @@ class PermMultipoleHeadSpec(BaseModel):
         unknown = set(v) - VALID_ENERGY_TERMS
         if unknown:
             raise ValueError(
-                f"Unknown energy_terms: {sorted(unknown)}. "
-                f"Valid: {sorted(VALID_ENERGY_TERMS)}."
+                f"Unknown energy_terms: {sorted(unknown)}. Valid: {sorted(VALID_ENERGY_TERMS)}."
             )
         return v
 
@@ -213,9 +208,7 @@ class PermMultipoleHeadSpec(BaseModel):
     @classmethod
     def _validate_damping(cls, v: str) -> str:
         if v not in VALID_DAMPINGS:
-            raise ValueError(
-                f"Unknown damping {v!r}; valid: {sorted(VALID_DAMPINGS)}."
-            )
+            raise ValueError(f"Unknown damping {v!r}; valid: {sorted(VALID_DAMPINGS)}.")
         return v
 
 
@@ -385,11 +378,13 @@ class PermMultipoleHead(nn.Module):
         # Each term's required moments must all be enabled.  Iterating
         # gives a precise per-term error rather than a generic message.
         moments_on = {
-            name for name, on in [
+            name
+            for name, on in [
                 ("charge", cfg.charge),
                 ("dipole", cfg.dipole),
                 ("quadrupole", cfg.quadrupole),
-            ] if on
+            ]
+            if on
         }
         for term in cfg.energy_terms:
             missing = _TERM_REQUIREMENTS[term] - moments_on
@@ -432,8 +427,8 @@ class PermMultipoleHead(nn.Module):
         if cfg.dipole or cfg.quadrupole:
             if tensor_irreps is None:
                 needs = ", ".join(
-                    name for name, on in
-                    [("dipole", cfg.dipole), ("quadrupole", cfg.quadrupole)]
+                    name
+                    for name, on in [("dipole", cfg.dipole), ("quadrupole", cfg.quadrupole)]
                     if on
                 )
                 raise ValueError(
@@ -503,15 +498,15 @@ class PermMultipoleHead(nn.Module):
     # forward
     # ------------------------------------------------------------------
     def forward(self, batch: GraphBatch) -> dict[str, torch.Tensor]:
-        edge_features = batch["edges", "edge_features"]               # (E, F)
-        edge_index = batch["edges", "edge_index"]                     # (E, 2)
-        bond_dist = batch["edges", "bond_dist"]                       # (E,)
+        edge_features = batch["edges", "edge_features"]  # (E, F)
+        edge_index = batch["edges", "edge_index"]  # (E, 2)
+        bond_dist = batch["edges", "bond_dist"]  # (E,)
         # ``bond_diff`` is required by qm / mm (they project moments onto
         # the unit edge vector R̂ = bond_diff / r).  qq alone doesn't
         # need it, but reading it unconditionally keeps the forward path
         # branch-free and bond_diff is part of the standard edge schema.
-        bond_diff = batch["edges", "bond_diff"]                       # (E, 3)
-        atom_batch = batch["atoms", "batch"]                          # (N,)
+        bond_diff = batch["edges", "bond_diff"]  # (E, 3)
+        atom_batch = batch["atoms", "batch"]  # (N,)
         n_nodes: int = int(batch["atoms", "Z"].shape[0])
         n_graphs: int = int(batch["graphs"].batch_size[0])
         device = edge_features.device
@@ -520,16 +515,16 @@ class PermMultipoleHead(nn.Module):
         # 1. Pool edges → atoms (only needed for the l=0 charge head; the
         #    equivariant moment readouts do their own source-side scatter
         #    inside _equivariant_moment_readout).
-        atom_feats = self._scatter_mean_to_atoms(
-            edge_features, edge_index, n_nodes
-        ) if self.charge else None                                    # (N, F)
+        atom_feats = (
+            self._scatter_mean_to_atoms(edge_features, edge_index, n_nodes) if self.charge else None
+        )  # (N, F)
 
         out: dict[str, torch.Tensor] = {}
 
         # 2. Heads + per-graph total-charge projection.
         q: torch.Tensor | None = None
         if self.charge:
-            q_raw = self.q_head(atom_feats).squeeze(-1)               # (N,)
+            q_raw = self.q_head(atom_feats).squeeze(-1)  # (N,)
             if self.constrain_total_charge:
                 q, sum_pre, sum_post = self._project_total_charge(
                     q_raw, atom_batch, batch, n_graphs
@@ -543,7 +538,7 @@ class PermMultipoleHead(nn.Module):
 
         mu: torch.Tensor | None = None
         if self.dipole or self.quadrupole:
-            tensor_feats = batch["edges", "edge_tensor_features"]     # (E, irreps_dim)
+            tensor_feats = batch["edges", "edge_tensor_features"]  # (E, irreps_dim)
             src = edge_index[:, 0]
             if self.dipole:
                 mu = self._equivariant_moment_readout(
@@ -556,7 +551,7 @@ class PermMultipoleHead(nn.Module):
                     out_dim=3,
                     scalar_proj=self.mu_proj,
                     collapse=self.mu_collapse,
-                )                                                      # (N, 3)
+                )  # (N, 3)
                 batch[("atoms", self.out_dipole_key)] = mu
                 out[self.out_dipole_key] = mu
             if self.quadrupole:
@@ -570,7 +565,7 @@ class PermMultipoleHead(nn.Module):
                     out_dim=5,
                     scalar_proj=self.theta_proj,
                     collapse=self.theta_collapse,
-                )                                                      # (N, 5)
+                )  # (N, 5)
                 batch[("atoms", self.out_quadrupole_key)] = theta
                 out[self.out_quadrupole_key] = theta
 
@@ -578,7 +573,7 @@ class PermMultipoleHead(nn.Module):
         if q is not None:
             mu_mol = self._molecular_dipole(
                 q, mu, batch["atoms", "pos"], atom_batch, n_graphs
-            )                                                         # (B, 3)
+            )  # (B, 3)
             batch[("graphs", "molecular_dipole")] = mu_mol
             out["molecular_dipole"] = mu_mol
 
@@ -588,18 +583,25 @@ class PermMultipoleHead(nn.Module):
         #    moments are guaranteed by __init__ via _TERM_REQUIREMENTS.
         energy = torch.zeros(n_graphs, dtype=dtype, device=device)
         if "qq" in self.energy_terms:
-            energy = energy + self._coulomb_qq(
-                q, edge_index, bond_dist, atom_batch, n_graphs
-            )
+            energy = energy + self._coulomb_qq(q, edge_index, bond_dist, atom_batch, n_graphs)
         if "qm" in self.energy_terms:
             energy = energy + self._coulomb_qm(
-                q, mu, edge_index, bond_diff, bond_dist,
-                atom_batch, n_graphs,
+                q,
+                mu,
+                edge_index,
+                bond_diff,
+                bond_dist,
+                atom_batch,
+                n_graphs,
             )
         if "mm" in self.energy_terms:
             energy = energy + self._coulomb_mm(
-                mu, edge_index, bond_diff, bond_dist,
-                atom_batch, n_graphs,
+                mu,
+                edge_index,
+                bond_diff,
+                bond_dist,
+                atom_batch,
+                n_graphs,
             )
         # qt / mt / tt rejected in __init__; this dispatch grows when
         # the Θ-tensor interaction kernels land.
@@ -613,15 +615,15 @@ class PermMultipoleHead(nn.Module):
     def _equivariant_moment_readout(
         self,
         *,
-        tensor_feats: torch.Tensor,    # (E, irreps_dim) ir_mul layout
-        scalar_feats: torch.Tensor,    # (E, F)
-        src: torch.Tensor,             # (E,) edge source indices
+        tensor_feats: torch.Tensor,  # (E, irreps_dim) ir_mul layout
+        scalar_feats: torch.Tensor,  # (E, F)
+        src: torch.Tensor,  # (E,) edge source indices
         n_nodes: int,
-        block_offset: int,             # start of the lℓ block in tensor_feats
-        block_size: int,               # = (2ℓ+1) * u
-        out_dim: int,                  # = 2ℓ + 1
-        scalar_proj: nn.Module,        # F → u  (l=0, rotation-invariant)
-        collapse: nn.Module,           # cuet.Linear(u·lℓ → 1·lℓ)
+        block_offset: int,  # start of the lℓ block in tensor_feats
+        block_size: int,  # = (2ℓ+1) * u
+        out_dim: int,  # = 2ℓ + 1
+        scalar_proj: nn.Module,  # F → u  (l=0, rotation-invariant)
+        collapse: nn.Module,  # cuet.Linear(u·lℓ → 1·lℓ)
     ) -> torch.Tensor:
         r"""Inlined PaiNN-style scalar-gated lℓ readout.
 
@@ -651,20 +653,25 @@ class PermMultipoleHead(nn.Module):
         # Slice the lℓ block in ir_mul layout: (E, (2ℓ+1)*u) flattened
         # along the (component-outer, channel-inner) axes.
         v_flat = tensor_feats[:, block_offset : block_offset + block_size]
-        v_l = v_flat.reshape(E, out_dim, u).transpose(1, 2)            # (E, u, 2ℓ+1)
+        v_l = v_flat.reshape(E, out_dim, u).transpose(1, 2)  # (E, u, 2ℓ+1)
 
-        gate = scalar_proj(scalar_feats)                                # (E, u)
-        gated = gate.unsqueeze(-1) * v_l                                # (E, u, 2ℓ+1)
+        gate = scalar_proj(scalar_feats)  # (E, u)
+        gated = gate.unsqueeze(-1) * v_l  # (E, u, 2ℓ+1)
 
         # Repack to ir_mul layout (2ℓ+1, u) for cuet.Linear.
         gated_ir_mul = gated.transpose(1, 2).reshape(E, block_size)
-        edge_out = collapse(gated_ir_mul)                               # (E, 2ℓ+1)
+        edge_out = collapse(gated_ir_mul)  # (E, 2ℓ+1)
 
         atom_out = torch.zeros(
-            n_nodes, out_dim, dtype=edge_out.dtype, device=edge_out.device,
+            n_nodes,
+            out_dim,
+            dtype=edge_out.dtype,
+            device=edge_out.device,
         )
         atom_out.scatter_add_(
-            0, src.unsqueeze(-1).expand_as(edge_out), edge_out,
+            0,
+            src.unsqueeze(-1).expand_as(edge_out),
+            edge_out,
         )
         if self.avg_num_neighbors is not None:
             atom_out = atom_out / math.sqrt(self.avg_num_neighbors)
@@ -683,14 +690,10 @@ class PermMultipoleHead(nn.Module):
             dtype=edge_feats.dtype,
             device=edge_feats.device,
         )
-        atom_feats.scatter_add_(
-            0, src.unsqueeze(-1).expand_as(edge_feats), edge_feats
-        )
+        atom_feats.scatter_add_(0, src.unsqueeze(-1).expand_as(edge_feats), edge_feats)
         if self.avg_num_neighbors is not None:
             return atom_feats / math.sqrt(self.avg_num_neighbors)
-        count = torch.zeros(
-            n_nodes, dtype=edge_feats.dtype, device=edge_feats.device
-        )
+        count = torch.zeros(n_nodes, dtype=edge_feats.dtype, device=edge_feats.device)
         count.scatter_add_(
             0, src, torch.ones(src.shape[0], dtype=edge_feats.dtype, device=src.device)
         )
@@ -704,9 +707,7 @@ class PermMultipoleHead(nn.Module):
         n_graphs: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         q_target = batch["graphs", self.total_charge_key].to(q.dtype)
-        n_atoms_per_graph = torch.zeros(
-            n_graphs, dtype=q.dtype, device=q.device
-        )
+        n_atoms_per_graph = torch.zeros(n_graphs, dtype=q.dtype, device=q.device)
         n_atoms_per_graph.scatter_add_(0, atom_batch, torch.ones_like(q))
         sum_q = torch.zeros(n_graphs, dtype=q.dtype, device=q.device)
         sum_q.scatter_add_(0, atom_batch, q)
@@ -728,15 +729,11 @@ class PermMultipoleHead(nn.Module):
         # For neutral systems μ_mol is origin-independent — projection
         # ensures Σ q_i = 0, so the value matches the experimental dipole
         # up to the chosen origin convention.
-        per_atom = q.unsqueeze(-1) * pos                              # (N, 3)
+        per_atom = q.unsqueeze(-1) * pos  # (N, 3)
         if mu is not None:
             per_atom = per_atom + mu
-        mu_mol = torch.zeros(
-            n_graphs, 3, dtype=per_atom.dtype, device=per_atom.device
-        )
-        mu_mol.scatter_add_(
-            0, atom_batch.unsqueeze(-1).expand_as(per_atom), per_atom
-        )
+        mu_mol = torch.zeros(n_graphs, 3, dtype=per_atom.dtype, device=per_atom.device)
+        mu_mol.scatter_add_(0, atom_batch.unsqueeze(-1).expand_as(per_atom), per_atom)
         return mu_mol
 
     def _coulomb_qq(
@@ -765,7 +762,10 @@ class PermMultipoleHead(nn.Module):
         inv_r = self._screened_inv_r(bond_dist)
         e_pair = 0.5 * self.coulomb_constant * q[src] * q[dst] * inv_r
         return self._scatter_pair_to_graph(
-            e_pair, src, atom_batch, n_graphs,
+            e_pair,
+            src,
+            atom_batch,
+            n_graphs,
         )
 
     def _coulomb_qm(
@@ -800,15 +800,21 @@ class PermMultipoleHead(nn.Module):
                 bond_dist = bond_dist[mask]
                 bond_diff = bond_diff[mask]
         inv_r = bond_dist + 1e-12
-        r_hat = bond_diff / inv_r.unsqueeze(-1)                       # (E, 3)
+        r_hat = bond_diff / inv_r.unsqueeze(-1)  # (E, 3)
         # (R̂ · μ_i) and (R̂ · μ_j)
-        rhat_dot_mu_src = (r_hat * mu[src]).sum(dim=-1)               # (E,)
-        rhat_dot_mu_dst = (r_hat * mu[dst]).sum(dim=-1)               # (E,)
-        e_pair = 0.5 * self.coulomb_constant * (
-            q[dst] * rhat_dot_mu_src - q[src] * rhat_dot_mu_dst
-        ) / (bond_dist * bond_dist + 1e-24)
+        rhat_dot_mu_src = (r_hat * mu[src]).sum(dim=-1)  # (E,)
+        rhat_dot_mu_dst = (r_hat * mu[dst]).sum(dim=-1)  # (E,)
+        e_pair = (
+            0.5
+            * self.coulomb_constant
+            * (q[dst] * rhat_dot_mu_src - q[src] * rhat_dot_mu_dst)
+            / (bond_dist * bond_dist + 1e-24)
+        )
         return self._scatter_pair_to_graph(
-            e_pair, src, atom_batch, n_graphs,
+            e_pair,
+            src,
+            atom_batch,
+            n_graphs,
         )
 
     def _coulomb_mm(
@@ -841,16 +847,19 @@ class PermMultipoleHead(nn.Module):
                 bond_dist = bond_dist[mask]
                 bond_diff = bond_diff[mask]
         inv_r = bond_dist + 1e-12
-        r_hat = bond_diff / inv_r.unsqueeze(-1)                       # (E, 3)
-        mu_dot_mu = (mu[src] * mu[dst]).sum(dim=-1)                   # (E,)
-        rhat_dot_mu_src = (r_hat * mu[src]).sum(dim=-1)               # (E,)
-        rhat_dot_mu_dst = (r_hat * mu[dst]).sum(dim=-1)               # (E,)
+        r_hat = bond_diff / inv_r.unsqueeze(-1)  # (E, 3)
+        mu_dot_mu = (mu[src] * mu[dst]).sum(dim=-1)  # (E,)
+        rhat_dot_mu_src = (r_hat * mu[src]).sum(dim=-1)  # (E,)
+        rhat_dot_mu_dst = (r_hat * mu[dst]).sum(dim=-1)  # (E,)
         r3 = bond_dist * bond_dist * bond_dist + 1e-36
-        e_pair = 0.5 * self.coulomb_constant * (
-            mu_dot_mu - 3.0 * rhat_dot_mu_src * rhat_dot_mu_dst
-        ) / r3
+        e_pair = (
+            0.5 * self.coulomb_constant * (mu_dot_mu - 3.0 * rhat_dot_mu_src * rhat_dot_mu_dst) / r3
+        )
         return self._scatter_pair_to_graph(
-            e_pair, src, atom_batch, n_graphs,
+            e_pair,
+            src,
+            atom_batch,
+            n_graphs,
         )
 
     @staticmethod
@@ -862,9 +871,7 @@ class PermMultipoleHead(nn.Module):
     ) -> torch.Tensor:
         """Sum per-edge contributions into per-graph energies."""
         graph_idx = atom_batch[src]
-        energy = torch.zeros(
-            n_graphs, dtype=e_pair.dtype, device=e_pair.device
-        )
+        energy = torch.zeros(n_graphs, dtype=e_pair.dtype, device=e_pair.device)
         energy.scatter_add_(0, graph_idx, e_pair)
         return energy
 

@@ -38,12 +38,8 @@ class GlobalRescale(nn.Module):
 
     def __init__(self, *, scale: float = 1.0, shift: float = 0.0):
         super().__init__()
-        self.register_buffer(
-            "scale", torch.tensor(float(scale), dtype=config.ftype)
-        )
-        self.register_buffer(
-            "shift", torch.tensor(float(shift), dtype=config.ftype)
-        )
+        self.register_buffer("scale", torch.tensor(float(scale), dtype=config.ftype))
+        self.register_buffer("shift", torch.tensor(float(shift), dtype=config.ftype))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Return ``scale * x + shift`` (broadcast across ``x``)."""
@@ -108,9 +104,7 @@ class PerSpeciesScaleShift(nn.Module):
             return torch.full((length,), fill, dtype=config.ftype)
         t = torch.as_tensor(value, dtype=config.ftype)
         if t.ndim != 1 or t.shape[0] != length:
-            raise ValueError(
-                f"expected a 1D tensor of length {length}, got shape {tuple(t.shape)}"
-            )
+            raise ValueError(f"expected a 1D tensor of length {length}, got shape {tuple(t.shape)}")
         return t
 
     def forward(self, x: torch.Tensor, Z: torch.Tensor) -> torch.Tensor:
@@ -119,6 +113,5 @@ class PerSpeciesScaleShift(nn.Module):
 
     def extra_repr(self) -> str:
         return (
-            f"num_species={self.scales.shape[0]}, "
-            f"trainable={isinstance(self.scales, nn.Parameter)}"
+            f"num_species={self.scales.shape[0]}, trainable={isinstance(self.scales, nn.Parameter)}"
         )

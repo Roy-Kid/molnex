@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from molix.core.metrics import MAE, RMSE, MSE, R2Score, Accuracy, MetricCollection
+from molix.core.metrics import MAE, MSE, RMSE, Accuracy, MetricCollection, R2Score
 
 
 class TestMAE:

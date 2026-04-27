@@ -34,7 +34,6 @@ from torch.utils.data import Dataset
 
 from molix.data.cache import PackedCache
 
-
 __all__ = [
     "BaseDataset",
     "CachedDataset",
@@ -50,7 +49,10 @@ __all__ = [
 
 
 def split_indices(
-    n: int, sizes: Sequence[int], *, seed: int = 42,
+    n: int,
+    sizes: Sequence[int],
+    *,
+    seed: int = 42,
 ) -> list[list[int]]:
     """Seeded random N-way split of ``range(n)`` into per-size index lists.
 
@@ -62,8 +64,7 @@ def split_indices(
     total = sum(sizes)
     if total > n:
         raise ValueError(
-            f"sum(sizes)={total} exceeds n={n}; split cannot cover more "
-            f"samples than the source has"
+            f"sum(sizes)={total} exceeds n={n}; split cannot cover more samples than the source has"
         )
     gen = torch.Generator().manual_seed(seed)
     perm = torch.randperm(n, generator=gen).tolist()
@@ -109,9 +110,7 @@ class BaseDataset(Dataset[Any], ABC):
         assert sizes is not None
         if sum(sizes) != n:
             raise ValueError(f"sizes must sum to len(self)={n}, got sum={sum(sizes)}")
-        return tuple(
-            SubsetDataset(self, idx) for idx in split_indices(n, sizes, seed=seed)
-        )
+        return tuple(SubsetDataset(self, idx) for idx in split_indices(n, sizes, seed=seed))
 
 
 # ---------------------------------------------------------------------------

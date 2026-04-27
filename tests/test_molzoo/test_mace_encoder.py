@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 import torch
+from tests.utils import assert_compile_compatible
 
+from molix.data.types import AtomData, EdgeData, GraphBatch
 from molrep.embedding.node import DiscreteEmbeddingSpec
 from molzoo import MACE
-from molix.data.types import AtomData, EdgeData, GraphBatch
-from tests.utils import assert_compile_compatible
 
 
 @pytest.fixture

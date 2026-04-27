@@ -14,7 +14,6 @@ from molix.core.hooks import MetricsHook
 from molix.core.metrics import MAE, RMSE
 from molix.core.state import TrainState, display, resolve
 
-
 # ---------------------------------------------------------------------------
 # Invariant 1 — TrainState rejects flat slash-prefix writes
 # ---------------------------------------------------------------------------
@@ -94,9 +93,7 @@ def test_metrics_hook_val_update_does_not_touch_train_buffer():
 
     # Train buffer must be empty — val path must not have written into it.
     train_mae = hook.train_metrics[0]
-    assert not getattr(train_mae, "preds", []), (
-        "val path leaked into train_metrics buffer"
-    )
+    assert not getattr(train_mae, "preds", []), "val path leaked into train_metrics buffer"
 
 
 # ---------------------------------------------------------------------------

@@ -29,7 +29,6 @@ from molix.data.pipeline import TaskEntry
 from molix.data.task import DatasetTask
 from molix.profiler._utils import Timer, TimingStat, _fmt_table
 
-
 # ---------------------------------------------------------------------------
 # Result
 # ---------------------------------------------------------------------------

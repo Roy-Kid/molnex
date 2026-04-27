@@ -200,8 +200,7 @@ class DataModule:
         """
         if len(split_sizes) < 2:
             raise ValueError(
-                f"split_sizes must have >= 2 entries (train, val[, test]), "
-                f"got {split_sizes!r}"
+                f"split_sizes must have >= 2 entries (train, val[, test]), got {split_sizes!r}"
             )
         # split_indices validates sum(sizes) <= n and raises ValueError otherwise.
         indices = split_indices(len(source), split_sizes, seed=seed)
@@ -324,9 +323,7 @@ class _CollateFn:
     Python 3.14 multi-threaded-fork DeprecationWarning).
     """
 
-    def __init__(
-        self, schema: TargetSchema, batch_tasks: Sequence[TaskEntry]
-    ) -> None:
+    def __init__(self, schema: TargetSchema, batch_tasks: Sequence[TaskEntry]) -> None:
         self.schema = schema
         self.batch_tasks = batch_tasks
 

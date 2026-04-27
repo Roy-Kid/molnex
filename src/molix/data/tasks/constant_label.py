@@ -48,7 +48,5 @@ class ConstantLabel(SampleTask):
 
     def execute(self, data: dict) -> dict:
         targets = dict(data.get("targets", {}))
-        targets[self.key] = torch.tensor(
-            [self.value], dtype=torch.get_default_dtype()
-        )
+        targets[self.key] = torch.tensor([self.value], dtype=torch.get_default_dtype())
         return {**data, "targets": targets}

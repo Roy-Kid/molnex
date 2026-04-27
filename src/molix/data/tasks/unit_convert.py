@@ -62,8 +62,7 @@ class UnitConvert(SampleTask):
             factor = float((1.0 * src_unit).to(dst_unit).magnitude)
             if not _is_finite(factor):
                 raise ValueError(
-                    f"UnitConvert: non-finite factor for '{key}' "
-                    f"({src_str} → {dst_str})"
+                    f"UnitConvert: non-finite factor for '{key}' ({src_str} → {dst_str})"
                 )
             factors[str(key)] = factor
             units_repr[str(key)] = (str(src_unit), str(dst_unit))
@@ -74,8 +73,7 @@ class UnitConvert(SampleTask):
     @property
     def task_id(self) -> str:
         body = ",".join(
-            f"{k}:{self._units[k][0]}->{self._units[k][1]}"
-            for k in sorted(self.factors)
+            f"{k}:{self._units[k][0]}->{self._units[k][1]}" for k in sorted(self.factors)
         )
         return f"unit_convert:{body}"
 

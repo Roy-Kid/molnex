@@ -38,11 +38,9 @@ from tqdm import tqdm
 from molix.data.collate import TargetSchema
 from molix.data.source import Sample
 
-
 # All scalar properties exposed by raw QM9 records (excluding "tag" and "index").
 _QM9_GRAPH_TARGETS: frozenset[str] = frozenset(
-    {"A", "B", "C", "mu", "alpha", "homo", "lumo", "gap", "r2", "zpve",
-     "U0", "U", "H", "G", "Cv"}
+    {"A", "B", "C", "mu", "alpha", "homo", "lumo", "gap", "r2", "zpve", "U0", "U", "H", "G", "Cv"}
 )
 
 
@@ -51,10 +49,23 @@ _QM9_GRAPH_TARGETS: frozenset[str] = frozenset(
 # ---------------------------------------------------------------------------
 
 _PROPERTY_NAMES = [
-    "tag", "index",
-    "A", "B", "C", "mu", "alpha",
-    "homo", "lumo", "gap", "r2", "zpve",
-    "U0", "U", "H", "G", "Cv",
+    "tag",
+    "index",
+    "A",
+    "B",
+    "C",
+    "mu",
+    "alpha",
+    "homo",
+    "lumo",
+    "gap",
+    "r2",
+    "zpve",
+    "U0",
+    "U",
+    "H",
+    "G",
+    "Cv",
 ]
 
 _DEFAULT_URL = "https://ndownloader.figshare.com/files/3195389"
@@ -86,16 +97,14 @@ def _parse_xyz(content: str) -> dict:
     metadata = dict(zip(_PROPERTY_NAMES, prop_values))
 
     symbols, xs, ys, zs = [], [], [], []
-    for line in lines[2: 2 + natoms]:
+    for line in lines[2 : 2 + natoms]:
         parts = line.split()
         symbols.append(parts[0])
         xs.append(float(parts[1]))
         ys.append(float(parts[2]))
         zs.append(float(parts[3]))
 
-    z = torch.tensor(
-        [Element.get_atomic_number(s) for s in symbols], dtype=torch.long
-    )
+    z = torch.tensor([Element.get_atomic_number(s) for s in symbols], dtype=torch.long)
     pos = torch.tensor(list(zip(xs, ys, zs)), dtype=torch.float32)
 
     targets: dict[str, torch.Tensor] = {}

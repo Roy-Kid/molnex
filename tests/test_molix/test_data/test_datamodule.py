@@ -9,10 +9,8 @@ import torch
 from torch.utils.data import DataLoader
 
 from molix.data.cache import PackedCache
-from molix.data.collate import DEFAULT_TARGET_SCHEMA
 from molix.data.datamodule import DataModule
 from molix.data.dataset import CachedDataset
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -33,8 +31,7 @@ def _make_samples(n: int = 10) -> list[dict]:
     ]
 
 
-def _write_and_load_split(tmp_path: Path, train_n: int, val_n: int,
-                          dataset_cls=CachedDataset):
+def _write_and_load_split(tmp_path: Path, train_n: int, val_n: int, dataset_cls=CachedDataset):
     samples = _make_samples(train_n + val_n)
     train_sink = tmp_path / "train.pt"
     val_sink = tmp_path / "val.pt"
@@ -52,6 +49,7 @@ def _dm_factory(tmp_path):
         kwargs.setdefault("pin_memory", False)
         kwargs.setdefault("num_workers", 0)
         return DataModule(train, val, **kwargs)
+
     return _make
 
 
@@ -76,7 +74,8 @@ class TestDataModuleConstruction:
     def test_persistent_workers_requires_num_workers(self, tmp_path):
         train, val = _write_and_load_split(tmp_path, 4, 2)
         dm = DataModule(
-            train, val,
+            train,
+            val,
             num_workers=0,
             persistent_workers=True,
             pin_memory=False,
@@ -102,7 +101,7 @@ class TestDataLoaders:
         dm = _dm_factory(batch_size=4)
         dl = dm.train_dataloader()
         batch = next(iter(dl))
-        assert batch["atoms", "Z"].shape[0] == 8   # 4 mols × 2 atoms
+        assert batch["atoms", "Z"].shape[0] == 8  # 4 mols × 2 atoms
 
     def test_val_dataloader_no_shuffle(self, _dm_factory):
         dm = _dm_factory(batch_size=2)
@@ -125,6 +124,7 @@ class TestDataLoaders:
 class TestCollation:
     def test_batch_has_graph_batch_structure(self, _dm_factory):
         from molix.data.types import GraphBatch
+
         dm = _dm_factory(batch_size=4)
         batch = next(iter(dm.train_dataloader()))
         assert isinstance(batch, GraphBatch)
@@ -137,10 +137,12 @@ class TestCollation:
 
     def test_custom_target_schema(self, tmp_path):
         from molix.data.collate import TargetSchema
+
         train, val = _write_and_load_split(tmp_path, 4, 2)
         schema = TargetSchema(graph_level={"U0"}, atom_level=set())
-        dm = DataModule(train, val, target_schema=schema, batch_size=2,
-                        num_workers=0, pin_memory=False)
+        dm = DataModule(
+            train, val, target_schema=schema, batch_size=2, num_workers=0, pin_memory=False
+        )
         batch = next(iter(dm.train_dataloader()))
         assert "U0" in batch["graphs"].keys()
 
@@ -154,8 +156,7 @@ class TestCollation:
         tsink, vsink = tmp_path / "t.pt", tmp_path / "v.pt"
         PackedCache(tsink).save(samples[:4])
         PackedCache(vsink).save(samples[4:])
-        dm = DataModule(SchemaCarrier(tsink), SchemaCarrier(vsink),
-                        batch_size=2, pin_memory=False)
+        dm = DataModule(SchemaCarrier(tsink), SchemaCarrier(vsink), batch_size=2, pin_memory=False)
         assert dm.target_schema.graph_level == frozenset({"U0"})
 
     def test_explicit_target_schema_overrides_dataset(self, tmp_path):
@@ -169,8 +170,13 @@ class TestCollation:
         PackedCache(tsink).save(samples[:4])
         PackedCache(vsink).save(samples[4:])
         explicit = TargetSchema(graph_level={"U0"}, atom_level=frozenset())
-        dm = DataModule(SchemaCarrier(tsink), SchemaCarrier(vsink),
-                        target_schema=explicit, batch_size=2, pin_memory=False)
+        dm = DataModule(
+            SchemaCarrier(tsink),
+            SchemaCarrier(vsink),
+            target_schema=explicit,
+            batch_size=2,
+            pin_memory=False,
+        )
         assert dm.target_schema is explicit
 
 
@@ -223,7 +229,8 @@ class TestWorkerContext:
     def test_explicit_override(self, tmp_path):
         train, val = _write_and_load_split(tmp_path, 4, 2)
         dm = DataModule(
-            train, val,
+            train,
+            val,
             batch_size=2,
             num_workers=2,
             persistent_workers=False,
@@ -269,7 +276,8 @@ class TestFromCachedPipeline:
             .build()
         )
         dm = DataModule.from_cached_pipeline(
-            pipe, source,
+            pipe,
+            source,
             base_dir=tmp_path,
             split_sizes=(6, 2, 2),
             seed=7,
@@ -295,21 +303,22 @@ class TestFromCachedPipeline:
         # DataLoader produces a GraphBatch
         batch = next(iter(dm.train_dataloader()))
         assert isinstance(batch, GraphBatch)
-        assert batch["atoms", "Z"].shape[0] == 4   # 2 mols × 2 atoms
+        assert batch["atoms", "Z"].shape[0] == 4  # 2 mols × 2 atoms
 
     def test_two_way_split(self, tmp_path):
         from molix.data import (
-            InMemorySource, NeighborList, Pipeline,
+            InMemorySource,
+            NeighborList,
+            Pipeline,
         )
 
         samples = _make_samples(8)
         pipe = (
-            Pipeline("two-way")
-            .add(NeighborList(cutoff=3.0, max_num_pairs=32, pbc=False))
-            .build()
+            Pipeline("two-way").add(NeighborList(cutoff=3.0, max_num_pairs=32, pbc=False)).build()
         )
         dm = DataModule.from_cached_pipeline(
-            pipe, InMemorySource(samples),
+            pipe,
+            InMemorySource(samples),
             base_dir=tmp_path,
             split_sizes=(5, 3),
             batch_size=2,
@@ -323,16 +332,13 @@ class TestFromCachedPipeline:
     def test_rejects_oversized_split(self, tmp_path):
         from molix.data import InMemorySource, NeighborList, Pipeline
 
-        pipe = (
-            Pipeline("over")
-            .add(NeighborList(cutoff=3.0, max_num_pairs=32, pbc=False))
-            .build()
-        )
+        pipe = Pipeline("over").add(NeighborList(cutoff=3.0, max_num_pairs=32, pbc=False)).build()
         with pytest.raises(ValueError, match="exceeds"):
             DataModule.from_cached_pipeline(
-                pipe, InMemorySource(_make_samples(5)),
+                pipe,
+                InMemorySource(_make_samples(5)),
                 base_dir=tmp_path,
-                split_sizes=(4, 3),   # sum=7 > 5
+                split_sizes=(4, 3),  # sum=7 > 5
                 pin_memory=False,
             )
 
@@ -342,7 +348,8 @@ class TestFromCachedPipeline:
         pipe = Pipeline("one").add(NeighborList(cutoff=3.0, pbc=False)).build()
         with pytest.raises(ValueError, match=">= 2"):
             DataModule.from_cached_pipeline(
-                pipe, InMemorySource(_make_samples(5)),
+                pipe,
+                InMemorySource(_make_samples(5)),
                 base_dir=tmp_path,
                 split_sizes=(5,),
                 pin_memory=False,

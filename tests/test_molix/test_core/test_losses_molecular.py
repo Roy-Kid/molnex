@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 import torch
 
 from molix.core.losses import energy_force_mse, energy_mse
@@ -71,8 +70,8 @@ class TestEnergyForceMSE:
             _sample([6, 8], [[0, 0, 0], [1.2, 0, 0]], U0=2.0, forces=forces_b),
         ]
         from molix.data.collate import TargetSchema
-        schema = TargetSchema(graph_level=frozenset({"U0"}),
-                              atom_level=frozenset({"forces"}))
+
+        schema = TargetSchema(graph_level=frozenset({"U0"}), atom_level=frozenset({"forces"}))
         batch = collate_molecules(samples, schema)
 
         preds = {
@@ -81,24 +80,25 @@ class TestEnergyForceMSE:
         }
 
         loss_fn = energy_force_mse(
-            energy_target_key="U0", force_target_key="forces", lambda_F=0.5,
+            energy_target_key="U0",
+            force_target_key="forces",
+            lambda_F=0.5,
         )
         got = loss_fn(preds, batch)
 
         e_true = batch["graphs", "U0"].view_as(preds["energy"])
         f_true = batch["atoms", "forces"]
-        expected = (
-            torch.nn.functional.mse_loss(preds["energy"], e_true)
-            + 0.5 * torch.nn.functional.mse_loss(preds["forces"], f_true)
-        )
+        expected = torch.nn.functional.mse_loss(
+            preds["energy"], e_true
+        ) + 0.5 * torch.nn.functional.mse_loss(preds["forces"], f_true)
         assert torch.allclose(got, expected)
 
     def test_lambda_zero_matches_energy_only(self):
         forces = torch.zeros(1, 3)
         samples = [_sample([1], [[0, 0, 0]], U0=1.0, forces=forces)]
         from molix.data.collate import TargetSchema
-        schema = TargetSchema(graph_level=frozenset({"U0"}),
-                              atom_level=frozenset({"forces"}))
+
+        schema = TargetSchema(graph_level=frozenset({"U0"}), atom_level=frozenset({"forces"}))
         batch = collate_molecules(samples, schema)
 
         preds = {
@@ -106,7 +106,9 @@ class TestEnergyForceMSE:
             "forces": torch.ones(1, 3),
         }
         joint = energy_force_mse(
-            energy_target_key="U0", force_target_key="forces", lambda_F=0.0,
+            energy_target_key="U0",
+            force_target_key="forces",
+            lambda_F=0.0,
         )(preds, batch)
         energy_only = energy_mse("U0")(preds, batch)
         assert torch.allclose(joint, energy_only)

@@ -16,6 +16,32 @@ lives on :class:`PipelineSpec` (and on :class:`PackedCache` for file IO).
 """
 
 # Task hierarchy
+# Cache
+from molix.data.cache import PackedCache
+
+# Collation
+from molix.data.collate import (
+    DEFAULT_TARGET_SCHEMA,
+    TargetSchema,
+    collate_molecules,
+)
+
+# DataModule
+from molix.data.datamodule import DataModule, DataModuleProtocol
+
+# Dataset classes
+from molix.data.dataset import (
+    BaseDataset,
+    CachedDataset,
+    MmapDataset,
+    SubsetDataset,
+)
+
+# Pipeline DSL
+from molix.data.pipeline import Pipeline, PipelineSpec, TaskEntry
+
+# Data sources
+from molix.data.source import DataSource, InMemorySource, SubsetSource
 from molix.data.task import (
     BatchTask,
     DatasetTask,
@@ -30,33 +56,6 @@ from molix.data.tasks import (
     ConstantLabel,
     NeighborList,
     UnitConvert,
-)
-
-# Data sources
-from molix.data.source import DataSource, InMemorySource, SubsetSource
-
-# Pipeline DSL
-from molix.data.pipeline import Pipeline, PipelineSpec, TaskEntry
-
-# Cache
-from molix.data.cache import PackedCache
-
-# Dataset classes
-from molix.data.dataset import (
-    BaseDataset,
-    CachedDataset,
-    MmapDataset,
-    SubsetDataset,
-)
-
-# DataModule
-from molix.data.datamodule import DataModule, DataModuleProtocol
-
-# Collation
-from molix.data.collate import (
-    DEFAULT_TARGET_SCHEMA,
-    TargetSchema,
-    collate_molecules,
 )
 
 # Types

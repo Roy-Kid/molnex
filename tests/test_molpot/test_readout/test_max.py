@@ -2,7 +2,6 @@ import pytest
 import torch
 
 from molpot.pooling import MaxPooling
-
 from tests.utils import assert_compile_compatible
 
 

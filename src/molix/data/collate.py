@@ -32,9 +32,7 @@ class TargetSchema:
     any subclass that declares its own.
     """
 
-    graph_level: frozenset[str] = field(
-        default_factory=lambda: frozenset({"energy"})
-    )
+    graph_level: frozenset[str] = field(default_factory=lambda: frozenset({"energy"}))
     atom_level: frozenset[str] = field(default_factory=lambda: frozenset({"forces"}))
 
 

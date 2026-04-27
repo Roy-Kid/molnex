@@ -1,31 +1,31 @@
 """Tests for molzoo.mace module."""
 
-import pytest
-import torch
-import torch.nn as nn
 import math
 
 import cuequivariance_torch as cuet
+import pytest
+import torch
+import torch.nn as nn
+from tests.utils import assert_module_compiles, assert_module_exports, assert_outputs_close
 
+from molrep.embedding.angular import SphericalHarmonics
+from molrep.embedding.cutoff import CosineCutoff
+from molrep.embedding.node import DiscreteEmbeddingSpec, JointEmbedding
+from molrep.embedding.radial import BesselRBF
+from molrep.interaction.radial_mlp import RadialWeightMLP
+from molrep.interaction.symmetric_contraction import SymmetricContraction
+from molrep.interaction.tensor_product import ConvTP
+from molrep.readout.basis_projection import BasisProjection
+from molrep.readout.product_head import ProductHead
+from molrep.utils.equivariance import (
+    random_rotation_matrix,
+    rotate_vectors,
+    rotation_matrix_z,
+)
 from molzoo.mace import (
     EmbeddingBlock,
     InteractionBlock,
 )
-from molrep.readout.product_head import ProductHead
-from molrep.embedding.node import DiscreteEmbeddingSpec, JointEmbedding
-from molrep.interaction.radial_mlp import RadialWeightMLP
-from molrep.embedding.radial import BesselRBF
-from molrep.embedding.angular import SphericalHarmonics
-from molrep.embedding.cutoff import CosineCutoff
-from molrep.interaction.tensor_product import ConvTP, irreps_from_l_max, sh_irreps_from_l_max
-from molrep.interaction.symmetric_contraction import SymmetricContraction
-from molrep.readout.basis_projection import BasisProjection
-from molrep.utils.equivariance import (
-    rotation_matrix_z,
-    random_rotation_matrix,
-    rotate_vectors,
-)
-from tests.utils import assert_module_compiles, assert_module_exports, assert_outputs_close
 
 
 class TestEmbeddingBlock:
@@ -106,7 +106,9 @@ class TestEmbeddingBlock:
         bond_diff = torch.randn(n_edges, 3)
 
         # Normalize bond_diff to match bond_dist
-        bond_diff = bond_diff / torch.norm(bond_diff, dim=-1, keepdim=True) * bond_dist.unsqueeze(-1)
+        bond_diff = (
+            bond_diff / torch.norm(bond_diff, dim=-1, keepdim=True) * bond_dist.unsqueeze(-1)
+        )
 
         # Forward pass
         node_feats, edge_attrs, edge_feats = embedding_block(
@@ -179,7 +181,9 @@ class TestEmbeddingBlock:
         n_edges = 6
         bond_dist = torch.rand(n_edges) * embedding_config["r_max"]
         bond_diff = torch.randn(n_edges, 3)
-        bond_diff = bond_diff / torch.norm(bond_diff, dim=-1, keepdim=True) * bond_dist.unsqueeze(-1)
+        bond_diff = (
+            bond_diff / torch.norm(bond_diff, dim=-1, keepdim=True) * bond_dist.unsqueeze(-1)
+        )
 
         z = torch.randint(0, embedding_config["num_species"], (3,))
 
@@ -212,7 +216,6 @@ class TestEmbeddingBlock:
         cutoff_value_zero = embedding_block.cutoff_fn(bond_dist_zero)
         assert abs(cutoff_value_zero.item() - 1.0) < 0.01
 
-
     def test_compile(self, embedding_block, embedding_config):
         """Test that EmbeddingBlock can be compiled with torch.compile."""
         n_atoms = 4
@@ -222,7 +225,9 @@ class TestEmbeddingBlock:
         z = torch.randint(0, embedding_config["num_species"], (n_atoms,))
         bond_dist = torch.rand(n_edges) * embedding_config["r_max"]
         bond_diff = torch.randn(n_edges, 3)
-        bond_diff = bond_diff / torch.norm(bond_diff, dim=-1, keepdim=True) * bond_dist.unsqueeze(-1)
+        bond_diff = (
+            bond_diff / torch.norm(bond_diff, dim=-1, keepdim=True) * bond_dist.unsqueeze(-1)
+        )
 
         # Test compilation
         output_uncompiled, output_compiled = assert_module_compiles(
@@ -244,7 +249,9 @@ class TestEmbeddingBlock:
         z = torch.randint(0, embedding_config["num_species"], (n_atoms,))
         bond_dist = torch.rand(n_edges) * embedding_config["r_max"]
         bond_diff = torch.randn(n_edges, 3)
-        bond_diff = bond_diff / torch.norm(bond_diff, dim=-1, keepdim=True) * bond_dist.unsqueeze(-1)
+        bond_diff = (
+            bond_diff / torch.norm(bond_diff, dim=-1, keepdim=True) * bond_dist.unsqueeze(-1)
+        )
 
         # Test export
         exported_program, output_original, output_exported = assert_module_exports(
@@ -327,10 +334,7 @@ class TestInteractionBlock:
         num_bessel = interaction_config["num_bessel"]
 
         # Calculate irreps dimension (uniform multiplicity after optimization)
-        irreps_dim = sum(
-            num_features * (2 * l + 1)
-            for l in range(l_max + 1)
-        )
+        irreps_dim = sum(num_features * (2 * l + 1) for l in range(l_max + 1))
 
         # Calculate spherical harmonics dimension
         sh_dim = sum(2 * l + 1 for l in range(l_max + 1))
@@ -361,10 +365,7 @@ class TestInteractionBlock:
         num_features = interaction_config["num_features"]
 
         # Calculate dimensions (uniform multiplicity)
-        irreps_dim = sum(
-            num_features * (2 * l + 1)
-            for l in range(l_max + 1)
-        )
+        irreps_dim = sum(num_features * (2 * l + 1) for l in range(l_max + 1))
         sh_dim = sum(2 * l + 1 for l in range(l_max + 1))
 
         # Create input data
@@ -457,10 +458,7 @@ class TestInteractionBlock:
         num_features = interaction_config["num_features"]
 
         # Calculate dimensions (uniform multiplicity)
-        irreps_dim = sum(
-            num_features * (2 * l + 1)
-            for l in range(l_max + 1)
-        )
+        irreps_dim = sum(num_features * (2 * l + 1) for l in range(l_max + 1))
         sh_dim = sum(2 * l + 1 for l in range(l_max + 1))
 
         # Create input data
@@ -493,8 +491,7 @@ class TestInteractionBlock:
 
         # Test compilation
         output_uncompiled, output_compiled = assert_module_compiles(
-            interaction_block,
-            node_feats, edge_attrs, edge_feats, edge_index
+            interaction_block, node_feats, edge_attrs, edge_feats, edge_index
         )
 
         # Check outputs match
@@ -732,8 +729,7 @@ class TestProductHead:
 
         # Test compilation
         output_uncompiled, output_compiled = assert_module_compiles(
-            product_head,
-            node_features, atom_types
+            product_head, node_features, atom_types
         )
 
         # Check outputs match
@@ -792,9 +788,6 @@ class TestEmbeddingBlockEquivariance:
         z = torch.randint(0, 5, (n_atoms,))
         bond_diff = torch.randn(n_edges, 3)
         bond_dist = torch.norm(bond_diff, dim=-1)
-
-        # Normalize bond_diff
-        bond_diff_normalized = bond_diff / bond_dist.unsqueeze(-1)
 
         # Forward pass
         _, edge_attrs1, _ = embedding_block(

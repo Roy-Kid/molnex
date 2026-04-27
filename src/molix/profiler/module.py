@@ -31,7 +31,6 @@ import torch.nn as nn
 
 from molix.profiler._utils import TimingStat, ValueStat, _fmt_table, reset_peak_memory
 
-
 # ---------------------------------------------------------------------------
 # Result
 # ---------------------------------------------------------------------------
@@ -91,7 +90,15 @@ class ModuleResult:
                 }
             )
             total = self.forward_ms.mean_ms + self.backward_ms.mean_ms
-            rows.append({"Pass": "Total/step", "mean(ms)": f"{total:.3f}", "std(ms)": "", "p50(ms)": "", "p95(ms)": ""})
+            rows.append(
+                {
+                    "Pass": "Total/step",
+                    "mean(ms)": f"{total:.3f}",
+                    "std(ms)": "",
+                    "p50(ms)": "",
+                    "p95(ms)": "",
+                }
+            )
 
         print(_fmt_table(rows, ["Pass", "mean(ms)", "std(ms)", "p50(ms)", "p95(ms)"], col_width=10))
         print()
@@ -176,6 +183,7 @@ def _make_batch_iter(
     if isinstance(data, (list, tuple)):
         # Cycle through the list
         return (data[i % len(data)] for i in range(n_total))
+
     # Assume DataLoader or other iterable — wrap with cycling
     def _cycle(iterable: Iterable, n: int):  # type: ignore[return]
         buf: list = []
@@ -191,6 +199,7 @@ def _make_batch_iter(
                 if not buf:
                     return
                 it = iter(buf)
+
     return _cycle(data, n_total)
 
 

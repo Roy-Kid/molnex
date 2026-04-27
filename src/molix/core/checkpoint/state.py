@@ -8,7 +8,7 @@ metrics/counter dict passed to hooks and steps.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -97,13 +97,8 @@ class Checkpoint:
         self._unwrap_model().load_state_dict(state_dict["model_state_dict"])
         self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
 
-        if (
-            self.lr_scheduler is not None
-            and "lr_scheduler_state_dict" in state_dict
-        ):
-            self.lr_scheduler.load_state_dict(
-                state_dict["lr_scheduler_state_dict"]
-            )
+        if self.lr_scheduler is not None and "lr_scheduler_state_dict" in state_dict:
+            self.lr_scheduler.load_state_dict(state_dict["lr_scheduler_state_dict"])
         if self.scaler is not None and "scaler_state_dict" in state_dict:
             self.scaler.load_state_dict(state_dict["scaler_state_dict"])
         if "rng_states" in state_dict:

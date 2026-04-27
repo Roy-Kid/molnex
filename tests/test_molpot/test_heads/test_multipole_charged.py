@@ -94,9 +94,7 @@ class TestFailFastOnMissingTotalCharge:
 
     def test_constrain_off_does_not_require_total_charge(self):
         """When projection is disabled, the field isn't read at all."""
-        head = PermMultipoleHead(
-            input_dim=8, avg_num_neighbors=4.0, constrain_total_charge=False
-        )
+        head = PermMultipoleHead(input_dim=8, avg_num_neighbors=4.0, constrain_total_charge=False)
         # Should not raise even though ``total_charge`` is absent.
         out = head(_stub_batch(total_charge=None))
         assert "atomic_charges" in out

@@ -35,7 +35,6 @@ from __future__ import annotations
 
 from tensordict import TensorDict
 
-
 # ---------------------------------------------------------------------------
 # Atom-level (batch_size=[N_total])
 # ---------------------------------------------------------------------------

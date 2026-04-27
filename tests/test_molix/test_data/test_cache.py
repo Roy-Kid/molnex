@@ -7,7 +7,6 @@ import torch
 
 from molix.data.cache import PackedCache
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -66,9 +65,7 @@ class TestSaveLoad:
         )
         data = cache.load()
         assert "task_states" in data
-        assert torch.equal(
-            data["task_states"]["shift:y"]["mean"], torch.tensor(2.5)
-        )
+        assert torch.equal(data["task_states"]["shift:y"]["mean"], torch.tensor(2.5))
 
     def test_default_is_mmap(self, tmp_path):
         """Default load uses mmap; same contents on both paths."""
@@ -82,7 +79,7 @@ class TestSaveLoad:
         cache = PackedCache(tmp_path / "x.pt")
         cache.save(_samples(2))
         mtime = cache.sink.stat().st_mtime_ns
-        cache.save(_samples(99))                      # no-op
+        cache.save(_samples(99))  # no-op
         assert cache.sink.stat().st_mtime_ns == mtime
         assert len(cache.load()["samples"]) == 2
 
@@ -97,6 +94,7 @@ class TestSaveLoad:
     def test_atomic_cleans_partial_on_failure(self, tmp_path, monkeypatch):
         def boom(*_a, **_kw):
             raise RuntimeError("boom")
+
         monkeypatch.setattr("molix.data.cache.torch.save", boom)
 
         with pytest.raises(RuntimeError, match="boom"):
@@ -119,10 +117,16 @@ class TestSaveLoad:
 class TestUnpackSample:
     def test_reconstructs_nested_dict(self, tmp_path):
         samples = [
-            {"Z": torch.tensor([1, 6]), "pos": torch.zeros(2, 3),
-             "targets": {"U0": torch.tensor([1.0])}},
-            {"Z": torch.tensor([7, 8]), "pos": torch.ones(2, 3),
-             "targets": {"U0": torch.tensor([2.0])}},
+            {
+                "Z": torch.tensor([1, 6]),
+                "pos": torch.zeros(2, 3),
+                "targets": {"U0": torch.tensor([1.0])},
+            },
+            {
+                "Z": torch.tensor([7, 8]),
+                "pos": torch.ones(2, 3),
+                "targets": {"U0": torch.tensor([2.0])},
+            },
         ]
         cache = PackedCache(tmp_path / "x.pt")
         cache.save(samples)
@@ -147,7 +151,8 @@ class TestWaitUntilReady:
     def test_raises_on_timeout(self, tmp_path):
         with pytest.raises(TimeoutError, match="Timed out"):
             PackedCache(tmp_path / "never.pt").wait_until_ready(
-                timeout=0.3, poll_interval=0.05,
+                timeout=0.3,
+                poll_interval=0.05,
             )
 
 
@@ -188,10 +193,8 @@ class TestMakeKey:
         assert a != b
 
     def test_extra_key_order_is_stable(self):
-        a = PackedCache.make_key(pipeline_id="p", source_id="s",
-                                 extra={"a": "1", "b": "2"})
-        b = PackedCache.make_key(pipeline_id="p", source_id="s",
-                                 extra={"b": "2", "a": "1"})
+        a = PackedCache.make_key(pipeline_id="p", source_id="s", extra={"a": "1", "b": "2"})
+        b = PackedCache.make_key(pipeline_id="p", source_id="s", extra={"b": "2", "a": "1"})
         assert a == b
 
     def test_return_is_short_hex(self):
@@ -213,5 +216,6 @@ class TestMisc:
 
     def test_fspath_roundtrips_through_str(self, tmp_path):
         import os
+
         p = tmp_path / "x.pt"
         assert os.fspath(PackedCache(p)) == str(p)
