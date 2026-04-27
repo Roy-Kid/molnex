@@ -29,25 +29,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # CI runs Python 3.13 even though local dev uses 3.14, because
+      # PyTorch's CPU wheel index does not yet ship cp314 builds.  We
+      # need the CPU torch wheel (not the default PyPI CUDA build), as
+      # the latter's Caffe2Config.cmake hard-fails ``find_package(Torch)``
+      # whenever CUDA libs are absent — even with MOLNEX_OP_ENABLE_CUDA
+      # off, that check still runs.  Lint + typecheck don't need 3.14
+      # parity (Alvis covers that locally); they are syntactic/static
+      # checks.
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: "3.13"
 
       # Pre-install build prerequisites in the outer env so the
       # subsequent ``pip install --no-build-isolation`` can use them:
       #   * ``scikit-build-core`` is the build backend declared in
       #     ``pyproject.toml``.  Without it in the outer env, pip's
       #     PEP 517 hook fails with ``BackendUnavailable``.
-      #   * ``torch`` ships ``TorchConfig.cmake``, which
-      #     ``src/molix/op/CMakeLists.txt`` consumes via
-      #     ``find_package(Torch REQUIRED)``.
+      #   * ``torch`` from the CPU index — ships ``TorchConfig.cmake``
+      #     without baked-in CUDA dependency, so ``find_package(Torch)``
+      #     in ``src/molix/op/CMakeLists.txt`` resolves on a stock
+      #     runner.
       #   * ``cmake>=4`` and ``ninja`` are the toolchain
       #     ``scikit-build-core`` shells out to.
       - name: Install build prerequisites
         run: |
           python -m pip install --upgrade pip
-          pip install "scikit-build-core>=0.10" "cmake>=4" ninja "torch>=2.10"
+          pip install "scikit-build-core>=0.10" "cmake>=4" ninja
+          pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.10"
 
       # ``CMAKE_PREFIX_PATH`` exposes the torch CMake config dir so
       # ``find_package(Torch)`` resolves on stock GitHub runners (Alvis
