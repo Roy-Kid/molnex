@@ -1,5 +1,10 @@
 [build-system]
-requires = ["scikit-build-core>=0.10", "torch>=2.10"]
+# ``cmake>=4`` and ``ninja`` are pinned in build-system.requires so that
+# scikit-build-core's build environment uses the right toolchain even on
+# CI runners where the system cmake is 3.x.  ``torch>=2.10`` is required
+# during build because ``src/molix/op/CMakeLists.txt`` does
+# ``find_package(Torch REQUIRED)`` and consumes its CMake config.
+requires = ["scikit-build-core>=0.10", "torch>=2.10", "cmake>=4.0.0", "ninja"]
 build-backend = "scikit_build_core.build"
 
 [project]
