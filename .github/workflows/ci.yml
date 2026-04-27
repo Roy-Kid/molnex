@@ -20,13 +20,25 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Install the project (with dev extras) so ``ty`` can resolve every
-      # third-party import (cuequivariance, torch, molcrafts-*).  The
-      # build pulls cmake>=4 + ninja via ``[build-system].requires`` and
-      # compiles the C++ ``molnex_op`` extension; ``MOLNEX_OP_ENABLE_CUDA``
-      # defaults OFF so this builds CPU-only on the GitHub runner.
+      # Pre-install build prerequisites in the outer env so the
+      # subsequent ``--no-build-isolation`` install can use them.  In
+      # particular, ``src/molix/op/CMakeLists.txt`` does
+      # ``find_package(Torch REQUIRED)`` which needs TorchConfig.cmake
+      # on disk — it ships inside the torch wheel, so torch must be
+      # installed before the build runs.
+      - name: Install build prerequisites
+        run: |
+          python -m pip install --upgrade pip
+          pip install "cmake>=4" ninja "torch>=2.10"
+
+      # Install the project (with dev extras) without build isolation so
+      # ``find_package(Torch)`` resolves and ty can resolve every
+      # third-party import (cuequivariance, torch, molcrafts-*) at
+      # type-check time.  ``MOLNEX_OP_ENABLE_CUDA`` defaults OFF so the
+      # C++ extension builds CPU-only on the GitHub runner.
       - name: Install project
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev]" --no-build-isolation -v
+        timeout-minutes: 20
 
       - name: Ruff format
         run: ruff format --check src/ tests/
@@ -53,14 +65,20 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
+      - name: Install build prerequisites
+        run: |
+          python -m pip install --upgrade pip
+          pip install "cmake>=4" ninja "torch>=2.10"
 
-      # ``-p no:cacheprovider`` avoids creating .pytest_cache (writable
-      # /tmp on CI is fine, but cache is useless across fresh runners).
-      # Tests that require a GPU should self-skip via
-      # ``pytest.importorskip`` or ``pytest.mark.skipif``; the suite is
-      # CPU-runnable as long as cuequivariance imports cleanly.
+      - name: Install dependencies
+        run: pip install -e ".[dev]" --no-build-isolation -v
+        timeout-minutes: 20
+
+      # ``-p no:cacheprovider`` avoids creating .pytest_cache (cache is
+      # useless across fresh runners).  Tests that strictly require GPU
+      # should self-skip via ``pytest.importorskip`` or
+      # ``pytest.mark.skipif(not torch.cuda.is_available())``; the suite
+      # is otherwise CPU-runnable.
       - name: Run tests
         run: pytest tests/ -q --cov=src/ --cov-report=xml -p no:cacheprovider
 
