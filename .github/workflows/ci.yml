@@ -21,23 +21,23 @@ jobs:
           python-version: "3.14"
 
       # Pre-install build prerequisites in the outer env so the
-      # subsequent ``--no-build-isolation`` install can use them.  In
-      # particular, ``src/molix/op/CMakeLists.txt`` does
-      # ``find_package(Torch REQUIRED)`` which needs TorchConfig.cmake
-      # on disk — it ships inside the torch wheel, so torch must be
-      # installed before the build runs.
+      # subsequent ``--no-build-isolation`` install can use them.
       - name: Install build prerequisites
         run: |
           python -m pip install --upgrade pip
           pip install "cmake>=4" ninja "torch>=2.10"
 
-      # Install the project (with dev extras) without build isolation so
-      # ``find_package(Torch)`` resolves and ty can resolve every
-      # third-party import (cuequivariance, torch, molcrafts-*) at
-      # type-check time.  ``MOLNEX_OP_ENABLE_CUDA`` defaults OFF so the
-      # C++ extension builds CPU-only on the GitHub runner.
+      # ``src/molix/op/CMakeLists.txt`` does ``find_package(Torch
+      # REQUIRED)``, which needs ``TorchConfig.cmake`` on
+      # ``CMAKE_PREFIX_PATH``.  The torch wheel ships its CMake config
+      # under ``<site-packages>/torch/share/cmake``; expose that path
+      # so cmake actually finds it on stock GitHub runners (Alvis
+      # picks it up via system hooks).
       - name: Install project
-        run: pip install -e ".[dev]" --no-build-isolation -v
+        run: |
+          export CMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
+          echo "CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
+          pip install -e ".[dev]" --no-build-isolation -v
         timeout-minutes: 20
 
       - name: Ruff format
@@ -75,7 +75,10 @@ jobs:
           pip install "cmake>=4" ninja "torch>=2.10"
 
       - name: Install dependencies
-        run: pip install -e ".[dev]" --no-build-isolation -v
+        run: |
+          export CMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
+          echo "CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
+          pip install -e ".[dev]" --no-build-isolation -v
         timeout-minutes: 20
 
       # ``-p no:cacheprovider`` avoids creating .pytest_cache (cache is
