@@ -1,12 +1,18 @@
 """Training state and result types for MolNex.
 
 Scalars produced during training live inside the ``train`` / ``eval`` /
-``performance`` / ``gpu`` sub-dicts of :class:`TrainState`, never at the
-top level with a slash-prefix key. Hooks read/write nested dicts
-directly (``state["train"]["loss"] = x``); dotted-path access via a
-resolver method is **not** provided — callers that need to address a
-scalar from the outside use tuple paths (``("train", "loss")``), with
-dotted strings reserved for display only.
+``performance`` / ``gpu`` sub-dicts of :class:`TrainState`. **Writes**
+must address exactly one namespace at a time (``state["train"]["loss"]
+= x``); slash-prefix and tuple-path writes are rejected at
+``__setitem__`` so two hooks cannot silently share a flat namespace
+and clobber each other.
+
+**Reads** are ergonomic — :class:`TrainState` walks the nesting for
+both slash-string (``state["eval/MAE"]``) and tuple-path
+(``state[("eval", "MAE")]``) forms in addition to plain top-level
+keys. Same goes for ``state.get(...)`` and ``key in state``. The
+:func:`resolve` free function exists for use against arbitrary
+``Mapping`` instances and accepts the same shapes.
 
 See CLAUDE.md "State namespace contract" for the full rules.
 """
@@ -37,6 +43,16 @@ class TrainState(dict):
     ``steps_since_last_eval``, ``best_metric``, plus the four sub-dict
     namespaces ``train``, ``eval``, ``performance``, ``gpu``. Hooks
     write scalars into the appropriate sub-dict.
+
+    Reads accept three equivalent forms:
+
+    * plain top-level key: ``state["epoch"]``
+    * slash-string path:   ``state["eval/MAE"]`` → ``state["eval"]["MAE"]``
+    * tuple path:          ``state[("eval", "MAE")]`` → same
+
+    The same forms work for ``.get(key, default)`` and ``key in state``.
+    Writes still go through nested dict access only — slash and tuple
+    writes are rejected so namespace ownership stays explicit.
     """
 
     def __init__(self, *args, **kwargs):
@@ -49,13 +65,40 @@ class TrainState(dict):
             if not isinstance(super().get(ns), dict):
                 super().__setitem__(ns, {})
 
+    @staticmethod
+    def _path_segments(key: Any) -> tuple[str, ...] | None:
+        """Return path segments if `key` is a multi-segment path, else None."""
+        if isinstance(key, tuple):
+            return key
+        if isinstance(key, str) and "/" in key:
+            return tuple(key.split("/"))
+        return None
+
+    def _walk(self, segments: tuple[str, ...]) -> tuple[bool, Any]:
+        """Walk ``segments`` from self; return (found, value)."""
+        node: Any = self
+        for seg in segments:
+            if not isinstance(node, Mapping) or seg not in node:
+                return False, None
+            node = node[seg]
+        return True, node
+
     def __setitem__(self, key, value):
-        """Reject slash-prefix keys and non-dict namespace replacements."""
+        """Reject slash / tuple writes and non-dict namespace replacements."""
         if isinstance(key, str) and "/" in key:
             ns, _, sub = key.partition("/")
             raise ValueError(
-                f"TrainState does not accept slash-prefix keys at the top level. "
+                f"TrainState does not accept slash-prefix keys for writes. "
                 f"Write state[{ns!r}][{sub!r}] = ... instead of state[{key!r}] = .... "
+                f"See CLAUDE.md 'State namespace contract'."
+            )
+        if isinstance(key, tuple):
+            head = key[0] if key else "<empty>"
+            tail = key[1:] if len(key) > 1 else ()
+            raise ValueError(
+                f"TrainState does not accept tuple-path writes. "
+                f"Write state[{head!r}]{''.join(f'[{p!r}]' for p in tail)} = ... "
+                f"instead of state[{key!r}] = .... "
                 f"See CLAUDE.md 'State namespace contract'."
             )
         if key in NAMESPACES and not isinstance(value, dict):
@@ -63,6 +106,29 @@ class TrainState(dict):
                 f"TrainState[{key!r}] must be a dict (sub-namespace), got {type(value).__name__}."
             )
         super().__setitem__(key, value)
+
+    def __getitem__(self, key):
+        segments = self._path_segments(key)
+        if segments is None:
+            return super().__getitem__(key)
+        found, value = self._walk(segments)
+        if not found:
+            raise KeyError(key)
+        return value
+
+    def __contains__(self, key) -> bool:
+        segments = self._path_segments(key)
+        if segments is None:
+            return super().__contains__(key)
+        found, _ = self._walk(segments)
+        return found
+
+    def get(self, key, default=None):
+        segments = self._path_segments(key)
+        if segments is None:
+            return super().get(key, default)
+        found, value = self._walk(segments)
+        return value if found else default
 
     def increment_step(self) -> None:
         self["global_step"] = self["global_step"] + 1
@@ -127,11 +193,22 @@ Path = str | tuple[str, ...]
 
 
 def resolve(state: Mapping[str, Any], path: Path, default: Any = None) -> Any:
-    """Look up ``path`` in ``state``; return ``default`` if any segment misses."""
+    """Look up ``path`` in ``state``; return ``default`` if any segment misses.
+
+    ``path`` may be a tuple of segments, a slash-separated string
+    (``"eval/MAE"``), or a flat single-segment string (``"epoch"``).
+    Mirrors :class:`TrainState`'s read behavior so the same call works
+    against any ``Mapping`` (e.g. plain ``dict`` snapshots).
+    """
     if isinstance(path, str):
-        return state.get(path, default)
+        if "/" in path:
+            parts: tuple[str, ...] = tuple(path.split("/"))
+        else:
+            return state.get(path, default)
+    else:
+        parts = tuple(path)
     node: Any = state
-    for part in path:
+    for part in parts:
         if not isinstance(node, Mapping) or part not in node:
             return default
         node = node[part]

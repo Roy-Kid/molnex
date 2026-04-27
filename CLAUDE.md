@@ -175,8 +175,9 @@ state["eval"]["MAE"] = mae
 state["performance"]["step_per_second"] = rate
 state["gpu"]["peak_gib"] = peak
 
-# ❌ rejected at __setitem__ — raises KeyError
+# ❌ rejected at __setitem__ — raises ValueError
 state["train/loss"] = loss.item()
+state[("train", "loss")] = loss.item()
 ```
 
 This prevents two hooks from silently sharing a flat namespace and
@@ -184,23 +185,37 @@ colliding on keys (which is exactly how the train/MAE-exploded-to-203
 bug happened: eval path wrote into an accumulator shared with the
 train path).
 
-**Reads — tuple paths internally, dotted strings only for display.**
-Hooks access scalars through nested dict lookups (``state["train"]["loss"]``)
-or via the :data:`~molix.core.state.Path` type — a bare string for
-top-level keys, a tuple for nested ones. Helpers at
-:mod:`molix.core.state`:
+**Reads — three equivalent forms, no helper required.**
+:class:`TrainState` walks its nesting on read. All three of these
+return the same value (or ``None`` / a default if any segment misses):
+
+```python
+state["eval"]["MAE"]            # nested dict access
+state["eval/MAE"]               # slash-string path
+state[("eval", "MAE")]          # tuple path
+
+state.get("eval/MAE")           # all four: same fallback semantics
+state.get(("eval", "MAE"))
+state.get("epoch")              # plain top-level key still works
+"eval/MAE" in state             # walk-aware __contains__
+```
+
+For arbitrary ``Mapping`` instances (e.g. plain ``dict`` snapshots),
+:func:`molix.core.state.resolve` accepts the same shapes:
 
 ```python
 from molix.core.state import resolve, display
 
-resolve(state, ("train", "loss"))     # → state["train"]["loss"] or None
-resolve(state, "epoch")               # → top-level key
-display(("train", "loss"))            # → "train/loss"  (for log column headers)
+resolve(state, ("train", "loss"))     # tuple path
+resolve(state, "train/loss")          # slash string
+resolve(state, "epoch", default=0)    # flat key with default
+display(("train", "loss"))            # → "train/loss"  (for column headers)
 ```
 
-The dotted string form is **only** used as a display label (log column
-headers, TensorBoard tags); never as an addressing scheme inside the
-codebase.
+The slash-string form is fine for *reads* — Log column headers,
+TensorBoard tags, and external scripts addressing scalars all benefit
+from a single string identifier. Only the *write* side stays
+nested-only, which is what actually prevents namespace collisions.
 
 **Phase-ownership rules for hooks.**
 
@@ -313,33 +328,35 @@ file tells every skill which commands to run. Use:
 
 MolNex-specific agents remain: `ml-expert` (training dynamics — ML
 axis not covered by the generic plugin) and `molzoo-auditor` (the
-molzoo spec-walkthrough writer — see below). The former
+molzoo paper↔code verifier — see below). The former
 `molnex-compute-scientist` and `molnex-pm` have been promoted into
 the plugin as generic `compute-scientist` and `pm` agents and are now
 invoked via `/mol:review`.
 
-## Molzoo spec workflow — skills and agent
+## Molzoo spec workflow — one skill, one agent, one file
 
-Each encoder in `src/molzoo/` owns three sibling artifacts in `src/molzoo/specs/`:
+Each encoder in `src/molzoo/` owns **one** spec artifact at `src/molzoo/specs/<encoder>.md`, following the strict 10-section template embedded in `.claude/skills/molzoo-spec.md` (Scope & Boundary → Paper↔Code Mapping → Reference Alignment → Adaptation Ledger → Mathematical Contract → Config Mapping → Benchmark Contract incl. embedded Run log → System Boundary → Version Pinning → Spec Drift Policy).
 
-- `<encoder>.md` — paper-aligned spec (architecture, module math, I/O contract).
-- `<encoder>_walkthrough.md` — code↔spec↔paper audit with ✅ ℹ️ ⚠️ 🆚 verdict rows.
-- `<encoder>_experiments.csv` — append-only run log. Schema: `run_id,date,commit,dirty,dataset,config_label,steps,train_mae,val_mae,fwd_ms,bwd_ms,compiled,note_ref`.
+**Spec-first.** §2 / §3.1 / §5 of `<encoder>.md` MUST be filled from the paper + reference impl **before** any encoder code is written. The flow is `scaffold → fill → implement → audit`; reverse workflows ("write code first, retrofit the spec") are the failure mode this whole apparatus exists to prevent. See "Spec-first principle" in `.claude/skills/molzoo-spec.md` for the full rule.
 
-The following skills and agent keep those three artifacts in sync. **All are repo-local** under `.claude/skills/` and `.claude/agents/` — do not promote to `~/.claude/` without a second repo adopting the same pattern.
+There is **no** `_experiments.csv` and **no** `_walkthrough.md`. Run logs are §7.4 of `<encoder>.md` (markdown table, append-only). Audit verdicts from `molzoo-auditor` are **printed to the developer at chat time**, not tracked as files; on 📝/🆚 the agent patches `<encoder>.md` directly and that diff is the persistent trace.
 
-| Command | Type | Purpose |
-|---------|------|---------|
-| `/molzoo-spec-new <encoder> <arxiv_url>` | skill | Scaffold `<encoder>.md`, `<encoder>_walkthrough.md`, `<encoder>_experiments.csv` with the Reference section populated from the arXiv page. Refuses to overwrite existing artifacts. |
-| `/molzoo-spec-log <encoder>` | skill | Append one row to `<encoder>_experiments.csv` after a bench/train run. On MAE regression (> 10 %) or dirty tree, prompts to open a `molzoo-auditor` investigation and stubs a `run-<N>-<slug>` heading. |
-| `/molzoo-spec-lookup <encoder> <topic>` | skill | Read-only retrieval of spec + walkthrough sections for a topic. **Refuses to fabricate**: if the topic is uncovered, it suggests `molzoo-auditor` rather than summarising the paper from memory. |
-| `molzoo-auditor` | agent | Fetches the paper, compares to code, and appends a verdict row to `<encoder>_walkthrough.md`. Edits `<encoder>.md` only when the verdict is ⚠️/🆚. Required to write ≥ 1 walkthrough entry per invocation. |
+One skill + one agent. Both repo-local under `.claude/skills/` and `.claude/agents/` — do not promote to `~/.claude/` without a second repo adopting the same pattern.
 
-**Closed-loop contract.** Every operation either updates an artifact or explicitly delegates the update — no operation closes silently:
+| Trigger | Command | Effect |
+|---------|---------|--------|
+| Introduce a new encoder | `/molzoo-spec <encoder> --paper <arxiv_url> [--ref <org>/<repo>@<sha>]` | scaffolds `<encoder>.md` from the 10-section template; header + §9 + Changelog only; status `draft`. Code authoring forbidden. |
+| Translate paper + reference into spec | `/molzoo-spec <encoder> --fill` | populates §2 / §3.1 / §5 from the pinned reference impl + paper; bumps status to `partial`. Required before `<encoder>.py` is written. |
+| Debug or look up a topic | `/molzoo-spec <encoder> <topic>` | read-only; surfaces matching §2 / §4 / §5 sections verbatim; refuses to fabricate; refuses outright if §2/§3/§5 are still placeholders. |
+| After a bench / training run | `/molzoo-spec <encoder> --log <k=v ...>` | appends one row to §7.4; on MAE regression > 10 % or dirty tree, warns + suggests `molzoo-auditor`. |
+| Verify code vs spec vs paper | `molzoo-auditor` agent | **prints** ≥ 1 verdict report (✅ ℹ️ ⚠️ 📝 🆚) to the developer; ⚠️ (code-drift) recommends a code change without editing spec; 📝/🆚 patch `<encoder>.md` directly; may backfill the §7.4 `note` cell. |
 
-1. `/molzoo-spec-log` is append-only on the CSV; it **must** check the previous row and prompt auditor hand-off on anomalies, backfilling `note_ref` on the just-written row if the user accepts.
-2. `/molzoo-spec-lookup` **must** refuse on a topic miss and point at `molzoo-auditor`.
-3. `molzoo-auditor` **must** produce ≥ 1 walkthrough row per invocation (even just `✅ confirmed, no drift`) citing the triggering `run_id` or question + paper section + code file:line.
-4. `/molzoo-spec-new` is the only operation that writes to all three artifacts at once and only for a previously-absent encoder.
+**Closed-loop contract.** Every operation either updates `<encoder>.md`, prints a verdict, or explicitly delegates — no operation closes silently:
 
-Invariants are enforced **inside each skill**, not via `settings.json` hooks, for now.
+1. `/molzoo-spec --paper` is the only operation that creates `<encoder>.md`, and only for a previously-absent encoder; status starts `draft`.
+2. `/molzoo-spec --fill` MUST be run before any code is written; it bumps status to `partial`. Code authored against status `draft` is a process violation, not just drift (see §10.3 in the spec template).
+3. `/molzoo-spec --log` is append-only on §7.4; it MUST check the previous row and warn (not auto-invoke) on anomalies.
+4. `/molzoo-spec <topic>` MUST refuse on a miss (filled spec) and point at `molzoo-auditor`; MUST refuse outright on a `draft`-status spec and point at `--fill`.
+5. `molzoo-auditor` MUST print ≥ 1 verdict per invocation (even `✅ confirmed, no drift`), citing the triggering `run_id` or question + paper section + spec row + code file:line. ⚠️ (code-drift) is print-only; 📝/🆚 produce file diffs in `<encoder>.md`. The auditor never edits code — code changes are always the user's call.
+
+The 10-section structure of `<encoder>.md` is **immutable** — adding / removing / renaming a section is a §10.2 breaking change. Invariants are enforced inside the skill, not via `settings.json` hooks, for now.
