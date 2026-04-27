@@ -205,6 +205,13 @@ class PipelineSpec:
 
     def load_task_states(self, states: dict[str, dict[str, Any]]) -> None:
         """Restore fitted state into each :class:`DatasetTask` by entry name."""
+        names = [e.name for e in self.tasks]
+        if len(set(names)) != len(names):
+            raise RuntimeError(
+                f"Duplicate task names in pipeline {self.name!r}: {names!r}. "
+                f"This should be caught at Pipeline.add; state routing is "
+                f"ambiguous."
+            )
         by_name = {e.name: e.task for e in self.tasks}
         for name, state in states.items():
             task = by_name.get(name)
@@ -332,13 +339,24 @@ class Pipeline:
     def __init__(self, name: str) -> None:
         self.name = name
         self._entries: list[TaskEntry] = []
+        self._names: set[str] = set()
+
+    def _register(self, entry_name: str, task: Any) -> None:
+        if entry_name in self._names:
+            raise ValueError(
+                f"Task name {entry_name!r} already registered in pipeline "
+                f"{self.name!r}. Task names must be unique so fitted state "
+                f"can be unambiguously routed on cache load."
+            )
+        self._names.add(entry_name)
+        self._entries.append(TaskEntry(entry_name, task))
 
     def task(self, fn: Any = None, *, name: str | None = None) -> Any:
         """Register a bare function as a sample-level task."""
 
         def decorator(f: Any) -> Any:
             entry_name = name or getattr(f, "__name__", "task")
-            self._entries.append(TaskEntry(entry_name, f))
+            self._register(entry_name, f)
             return f
 
         if fn is not None:
@@ -349,7 +367,7 @@ class Pipeline:
         """Add a Task instance or plain callable. Returns self for chaining."""
         _validate_task(task)
         entry_name = name or getattr(task, "task_id", type(task).__name__)
-        self._entries.append(TaskEntry(entry_name, task))
+        self._register(entry_name, task)
         return self
 
     def build(self) -> PipelineSpec:

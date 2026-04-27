@@ -268,6 +268,30 @@ def get_table_width() -> int:
     return _table_width
 
 
+# Distinct from ``"nan"`` so silent path-resolution failures no longer look
+# like training divergence in the rendered table. Mirrored by
+# :data:`molix.core.hooks._MISSING_CELL`.
+_MISSING_METRIC_CELL = "—"
+
+
+def _render_metric_cell(value: Any, row_fmt: str, col_width: int) -> str:
+    """Render one metric-row cell — numeric, real-NaN, or missing.
+
+    Real numerical NaN renders as ``"nan"`` so model-divergence stays
+    visible. Anything that isn't a scalar (``None``, missing path,
+    non-scalar tensor) renders as :data:`_MISSING_METRIC_CELL`.
+    """
+    if isinstance(value, bool):
+        return row_fmt.format(int(value))
+    if isinstance(value, int):
+        return row_fmt.format(value)
+    if isinstance(value, float):
+        if value != value:
+            return f"{'nan':>{col_width}}"
+        return row_fmt.format(value)
+    return f"{_MISSING_METRIC_CELL:>{col_width}}"
+
+
 def _csv_cell(value: Any) -> str:
     """Render one CSV cell — quote only when needed, elide NaN as empty."""
     if value is None:
@@ -353,11 +377,9 @@ class PrettyTextFormatter(Formatter):
             values = extra["values"]
             parts: list[str] = []
             for c in cols:
-                v = values.get(c)
-                if isinstance(v, (int, float)) and not (isinstance(v, float) and v != v):
-                    parts.append(self._row_fmt.format(v))
-                else:
-                    parts.append(f"{'nan':>{self._col_width}}")
+                parts.append(
+                    _render_metric_cell(values.get(c), self._row_fmt, self._col_width)
+                )
             return " ".join(parts)
         width = int(extra.get("table_width", get_table_width()))
         if kind == "epoch_sep":

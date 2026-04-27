@@ -25,7 +25,12 @@ from molix.data.task import (
 )
 
 # Built-in tasks
-from molix.data.tasks import AtomicDress, NeighborList, UnitConvert
+from molix.data.tasks import (
+    AtomicDress,
+    ConstantLabel,
+    NeighborList,
+    UnitConvert,
+)
 
 # Data sources
 from molix.data.source import DataSource, InMemorySource, SubsetSource
@@ -58,10 +63,8 @@ from molix.data.collate import (
 from molix.data.types import (
     AtomData,
     EdgeData,
-    EdgeRepEdges,
     GraphBatch,
     GraphData,
-    NodeRepAtoms,
 )
 
 __all__ = [
@@ -72,8 +75,9 @@ __all__ = [
     "BatchTask",
     "Runnable",
     # Built-in tasks
-    "NeighborList",
     "AtomicDress",
+    "ConstantLabel",
+    "NeighborList",
     "UnitConvert",
     # Sources
     "DataSource",
@@ -102,6 +106,4 @@ __all__ = [
     "EdgeData",
     "GraphData",
     "GraphBatch",
-    "NodeRepAtoms",
-    "EdgeRepEdges",
 ]

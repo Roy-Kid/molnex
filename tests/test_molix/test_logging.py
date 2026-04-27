@@ -128,14 +128,30 @@ class TestPrettyTextFormatter:
         out = fmt.format(rec)
         assert out.split() == ["42", "0.125"]
 
-    def test_row_missing_value_becomes_nan(self):
+    def test_row_missing_value_renders_as_dash_not_nan(self):
+        """Missing path → ``"—"``, distinct from a real numerical NaN's
+        ``"nan"``. Reserves ``"nan"`` for genuine model divergence so a
+        silent path-resolution failure can't masquerade as one."""
         fmt = PrettyTextFormatter(col_width=10, row_fmt="{:>10.4g}")
         rec = _make_record({
             "kind": "row",
             "columns": ["step", "missing"],
             "values": {"step": 1},
         })
-        assert "nan" in fmt.format(rec)
+        out = fmt.format(rec)
+        assert "—" in out
+        assert "nan" not in out
+
+    def test_row_real_nan_renders_as_nan(self):
+        fmt = PrettyTextFormatter(col_width=10, row_fmt="{:>10.4g}")
+        rec = _make_record({
+            "kind": "row",
+            "columns": ["step", "loss"],
+            "values": {"step": 1, "loss": float("nan")},
+        })
+        out = fmt.format(rec)
+        assert "nan" in out
+        assert "—" not in out
 
     def test_epoch_sep_is_full_width_dashes(self):
         fmt = PrettyTextFormatter()

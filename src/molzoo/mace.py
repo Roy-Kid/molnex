@@ -346,8 +346,8 @@ class MACE(TensorDictModuleBase):
     """MACE equivariant feature encoder.
 
     Accepts a ``GraphBatch`` TensorDict and writes ``node_features``
-    into the ``atoms`` sub-dict, returning a ``GraphBatch`` with
-    ``NodeRepAtoms`` atoms.
+    into the ``atoms`` sub-dict in place, returning the same
+    ``GraphBatch`` with the new key added.
 
     Architecture::
 

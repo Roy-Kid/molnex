@@ -24,7 +24,8 @@ indices (as the workflow pattern recommends).
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from functools import cached_property
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,44 @@ from torch.utils.data import Dataset
 from molix.data.cache import PackedCache
 
 
-__all__ = ["BaseDataset", "MmapDataset", "CachedDataset", "SubsetDataset"]
+__all__ = [
+    "BaseDataset",
+    "CachedDataset",
+    "MmapDataset",
+    "SubsetDataset",
+    "split_indices",
+]
+
+
+# ---------------------------------------------------------------------------
+# Split helper
+# ---------------------------------------------------------------------------
+
+
+def split_indices(
+    n: int, sizes: Sequence[int], *, seed: int = 42,
+) -> list[list[int]]:
+    """Seeded random N-way split of ``range(n)`` into per-size index lists.
+
+    The returned lists partition a prefix of a shuffled permutation —
+    ``sum(sizes)`` may be less than ``n`` (trailing samples are dropped)
+    but must not exceed it. Callers that require ``sum(sizes) == n``
+    should validate separately.
+    """
+    total = sum(sizes)
+    if total > n:
+        raise ValueError(
+            f"sum(sizes)={total} exceeds n={n}; split cannot cover more "
+            f"samples than the source has"
+        )
+    gen = torch.Generator().manual_seed(seed)
+    perm = torch.randperm(n, generator=gen).tolist()
+    parts: list[list[int]] = []
+    offset = 0
+    for sz in sizes:
+        parts.append(perm[offset : offset + sz])
+        offset += sz
+    return parts
 
 
 # ---------------------------------------------------------------------------
@@ -64,22 +102,16 @@ class BaseDataset(Dataset[Any], ABC):
             raise ValueError("Provide exactly one of `ratio` or `sizes`.")
 
         n = len(self)
-        gen = torch.Generator().manual_seed(seed)
-        perm = torch.randperm(n, generator=gen).tolist()
-
         if ratio is not None:
             cut = int(n * ratio)
-            return (SubsetDataset(self, perm[:cut]), SubsetDataset(self, perm[cut:]))
+            sizes = (cut, n - cut)
 
         assert sizes is not None
         if sum(sizes) != n:
             raise ValueError(f"sizes must sum to len(self)={n}, got sum={sum(sizes)}")
-        parts: list[SubsetDataset] = []
-        offset = 0
-        for sz in sizes:
-            parts.append(SubsetDataset(self, perm[offset : offset + sz]))
-            offset += sz
-        return tuple(parts)
+        return tuple(
+            SubsetDataset(self, idx) for idx in split_indices(n, sizes, seed=seed)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +154,61 @@ class _CacheBacked(BaseDataset):
     def get_task_state(self, name: str) -> Any:
         """Return the fitted state for ``name`` (raises :class:`KeyError`)."""
         return self._task_states[name]
+
+    def stats(self) -> dict[str, Any]:
+        """Fitted :class:`DatasetTask` state keyed by task name.
+
+        Returns a shallow copy of ``{task_name: state_dict}`` for every
+        :class:`~molix.data.task.DatasetTask` in the pipeline that
+        produced this cache (e.g. ``AtomicDress``). The inner dict is the
+        task's own ``state_dict`` payload.
+
+        For dataset-wide connectivity statistics (``avg_num_neighbors``,
+        ``max_atoms``, ``max_edges``) use the dedicated properties on this
+        class — those are derived directly from the packed cache pointers
+        and don't need a dataset task to compute.
+
+        Also callable on :class:`SubsetDataset`: its ``__getattr__``
+        forwards unknown attributes to the wrapped dataset, so
+        ``subset.stats()`` returns the same mapping as the full dataset's.
+        """
+        return dict(self._task_states)
+
+    @cached_property
+    def avg_num_neighbors(self) -> float:
+        """Dataset-wide ⟨|N(i)|⟩ = total_edges / total_atoms.
+
+        Derived from packed cache pointers — no fit pass needed. With
+        ``NeighborList(symmetry=True)`` this equals the mean number of
+        neighbours per atom (Allegro/MACE normalisation constant).
+
+        Returns ``0.0`` if the cache has no edge or atom pointers.
+        """
+        atom_ptr = self._payload.get("atom_ptr")
+        edge_ptr = self._payload.get("edge_ptr")
+        if atom_ptr is None or edge_ptr is None:
+            return 0.0
+        total_atoms = int(atom_ptr[-1].item())
+        if total_atoms <= 0:
+            return 0.0
+        total_edges = int(edge_ptr[-1].item())
+        return total_edges / total_atoms
+
+    @cached_property
+    def max_atoms(self) -> int:
+        """Largest single-sample atom count. ``0`` if no per-atom keys."""
+        atom_ptr = self._payload.get("atom_ptr")
+        if atom_ptr is None or atom_ptr.numel() < 2:
+            return 0
+        return int((atom_ptr[1:] - atom_ptr[:-1]).max().item())
+
+    @cached_property
+    def max_edges(self) -> int:
+        """Largest single-sample edge count. ``0`` if no per-edge keys."""
+        edge_ptr = self._payload.get("edge_ptr")
+        if edge_ptr is None or edge_ptr.numel() < 2:
+            return 0
+        return int((edge_ptr[1:] - edge_ptr[:-1]).max().item())
 
 
 class MmapDataset(_CacheBacked):
@@ -167,6 +254,12 @@ class SubsetDataset(BaseDataset):
 
     Produced by :meth:`BaseDataset.split` or constructed directly from
     pre-computed indices (the workflow-driven split-first pattern).
+
+    Connectivity statistics (``avg_num_neighbors``, ``max_atoms``,
+    ``max_edges``) are recomputed over ``self._indices`` — a train subset
+    reports train-only stats, not the full-dataset values. This is the
+    right semantics for Allegro/MACE normalisation, which must not peek at
+    val/test.
     """
 
     def __init__(self, dataset: BaseDataset, indices: list[int]) -> None:
@@ -187,3 +280,42 @@ class SubsetDataset(BaseDataset):
 
     def __getitem__(self, idx: int) -> dict:  # type: ignore[override]
         return self._dataset[self._indices[idx]]
+
+    @cached_property
+    def avg_num_neighbors(self) -> float:
+        """Split-local ⟨|N(i)|⟩ = Σ_{i∈subset} n_edges_i / Σ_{i∈subset} n_atoms_i."""
+        payload = getattr(self._dataset, "_payload", None)
+        if payload is None:
+            return getattr(self._dataset, "avg_num_neighbors", 0.0)
+        atom_ptr = payload.get("atom_ptr")
+        edge_ptr = payload.get("edge_ptr")
+        if atom_ptr is None or edge_ptr is None:
+            return 0.0
+        idx = torch.as_tensor(self._indices, dtype=torch.long)
+        n_atoms = (atom_ptr[idx + 1] - atom_ptr[idx]).sum()
+        if int(n_atoms.item()) <= 0:
+            return 0.0
+        n_edges = (edge_ptr[idx + 1] - edge_ptr[idx]).sum()
+        return float(n_edges.item()) / float(n_atoms.item())
+
+    @cached_property
+    def max_atoms(self) -> int:
+        payload = getattr(self._dataset, "_payload", None)
+        if payload is None:
+            return getattr(self._dataset, "max_atoms", 0)
+        atom_ptr = payload.get("atom_ptr")
+        if atom_ptr is None or not self._indices:
+            return 0
+        idx = torch.as_tensor(self._indices, dtype=torch.long)
+        return int((atom_ptr[idx + 1] - atom_ptr[idx]).max().item())
+
+    @cached_property
+    def max_edges(self) -> int:
+        payload = getattr(self._dataset, "_payload", None)
+        if payload is None:
+            return getattr(self._dataset, "max_edges", 0)
+        edge_ptr = payload.get("edge_ptr")
+        if edge_ptr is None or not self._indices:
+            return 0
+        idx = torch.as_tensor(self._indices, dtype=torch.long)
+        return int((edge_ptr[idx + 1] - edge_ptr[idx]).max().item())

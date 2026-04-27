@@ -131,6 +131,25 @@ class TestBuilder:
         with pytest.raises(TypeError, match="Task"):
             Pipeline("p").add(42)    # type: ignore[arg-type]
 
+    def test_rejects_duplicate_name_on_add(self):
+        p = Pipeline("p").add(CountingSample(), name="shared")
+        with pytest.raises(ValueError, match="already registered"):
+            p.add(CountingSample(), name="shared")
+
+    def test_rejects_duplicate_name_across_add_and_decorator(self):
+        p = Pipeline("p").add(lambda s: s, name="shared")
+        with pytest.raises(ValueError, match="already registered"):
+
+            @p.task(name="shared")
+            def _f(s: dict) -> dict:
+                return s
+
+    def test_rejects_duplicate_inferred_name(self):
+        # Same Task class → same task_id → same default name → should raise.
+        p = Pipeline("p").add(CountingSample())
+        with pytest.raises(ValueError, match="already registered"):
+            p.add(CountingSample())
+
 
 # ---------------------------------------------------------------------------
 # Grouping

@@ -1,16 +1,18 @@
 """Molecular data types built on nested TensorDict.
 
-Defines a composable type hierarchy for molecular graph data:
+Defines a composable type hierarchy for molecular graph data as it appears
+*after* ``collate_molecules`` — i.e. the batch-side shape. Raw samples from
+``DataSource.__getitem__`` / ``MmapDataset[i]`` remain plain flat dicts; the
+nested form here is reached only via ``collate.collate_molecules``.
 
 - **AtomData** (batch_size=[N]): per-atom tensors (Z, pos, batch)
 - **EdgeData** (batch_size=[E]): per-edge tensors (edge_index, bond_diff, bond_dist)
 - **GraphData** (batch_size=[B]): per-graph tensors (num_atoms, targets)
 - **GraphBatch** (batch_size=[]): top-level container nesting atoms + edges [+ graphs]
 
-Encoder outputs extend the base types via inheritance:
-
-- **NodeRepAtoms** extends AtomData with ``node_features``
-- **EdgeRepEdges** extends EdgeData with ``edge_features``
+Encoder outputs are written into the existing sub-dicts in place — e.g.
+``batch["atoms", "node_features"] = ...`` and ``batch["edges", "edge_features"] = ...``.
+There is no subclass swap; the shape evolves by key addition, not by type.
 
 Example:
     >>> atoms = AtomData(
@@ -34,14 +36,6 @@ from __future__ import annotations
 from tensordict import TensorDict
 
 
-def _validate_keys(td: TensorDict, required: frozenset[str], cls_name: str) -> None:
-    """Check that all required keys are present in the TensorDict."""
-    present = set(str(k) for k in td.keys())
-    missing = required - present
-    if missing:
-        raise KeyError(f"{cls_name} missing required keys: {missing}")
-
-
 # ---------------------------------------------------------------------------
 # Atom-level (batch_size=[N_total])
 # ---------------------------------------------------------------------------
@@ -50,27 +44,15 @@ def _validate_keys(td: TensorDict, required: frozenset[str], cls_name: str) -> N
 class AtomData(TensorDict):
     """Per-atom tensors. ``batch_size=[N]``.
 
-    Required keys:
+    Schema produced by ``collate_molecules``:
         - ``Z``: Atomic numbers ``(N,)``
         - ``pos``: Atomic positions ``(N, 3)``
         - ``batch``: Graph membership ``(N,)``
+
+    Encoders may add ``node_features`` of shape ``(N, [L,] D)`` in place.
+    Atom-level targets (e.g. ``forces``) are also added here by the
+    collate function according to ``TargetSchema``.
     """
-
-    _required_keys: frozenset[str] = frozenset({"Z", "pos", "batch"})
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        _validate_keys(self, self._required_keys, type(self).__name__)
-
-
-class NodeRepAtoms(AtomData):
-    """AtomData extended with node-level encoder features.
-
-    Additional required keys:
-        - ``node_features``: Encoder output ``(N, [L,] D)``
-    """
-
-    _required_keys: frozenset[str] = AtomData._required_keys | {"node_features"}
 
 
 # ---------------------------------------------------------------------------
@@ -81,27 +63,13 @@ class NodeRepAtoms(AtomData):
 class EdgeData(TensorDict):
     """Per-edge tensors. ``batch_size=[E]``.
 
-    Required keys:
+    Schema produced by ``collate_molecules``:
         - ``edge_index``: Source-target pairs ``(E, 2)``
         - ``bond_diff``: Edge displacement vectors ``(E, 3)``
         - ``bond_dist``: Edge distances ``(E,)``
+
+    Encoders may add ``edge_features`` of shape ``(E, [L,] D)`` in place.
     """
-
-    _required_keys: frozenset[str] = frozenset({"edge_index", "bond_diff", "bond_dist"})
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        _validate_keys(self, self._required_keys, type(self).__name__)
-
-
-class EdgeRepEdges(EdgeData):
-    """EdgeData extended with edge-level encoder features.
-
-    Additional required keys:
-        - ``edge_features``: Encoder output ``(E, [L,] D)``
-    """
-
-    _required_keys: frozenset[str] = EdgeData._required_keys | {"edge_features"}
 
 
 # ---------------------------------------------------------------------------
@@ -112,18 +80,10 @@ class EdgeRepEdges(EdgeData):
 class GraphData(TensorDict):
     """Per-graph tensors. ``batch_size=[B]``.
 
-    Required keys:
+    Schema produced by ``collate_molecules``:
         - ``num_atoms``: Atom counts per graph ``(B,)``
-
-    Optional keys:
-        - ``targets``: Nested TensorDict of target labels
+        - Graph-level targets (e.g. ``energy``, ``U0``) per ``TargetSchema``.
     """
-
-    _required_keys: frozenset[str] = frozenset({"num_atoms"})
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        _validate_keys(self, self._required_keys, type(self).__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -135,17 +95,10 @@ class GraphBatch(TensorDict):
     """Top-level molecular graph batch. ``batch_size=[]``.
 
     Nests three levels with independent batch dimensions:
-        - ``atoms``: AtomData ``(batch_size=[N])``
-        - ``edges``: EdgeData ``(batch_size=[E])``
-        - ``graphs``: GraphData ``(batch_size=[B])`` (optional)
+        - ``atoms``: :class:`AtomData` ``(batch_size=[N])``
+        - ``edges``: :class:`EdgeData` ``(batch_size=[E])``
+        - ``graphs``: :class:`GraphData` ``(batch_size=[B])`` (optional)
 
-    Required keys:
-        - ``atoms``
-        - ``edges``
+    Access with tuple-keys: ``batch["atoms", "Z"]``, ``batch["edges", "edge_index"]``.
+    This nested form exists only post-collate; raw samples are flat dicts.
     """
-
-    _required_keys: frozenset[str] = frozenset({"atoms", "edges"})
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        _validate_keys(self, self._required_keys, type(self).__name__)

@@ -4,6 +4,9 @@ Tests three physical symmetries that molecular models must satisfy:
 1. Translation invariance — features/energy unchanged under rigid shifts
 2. Rotation invariance/equivariance — scalar features/energy invariant, forces equivariant
 3. Permutation equivariance — features permute with atom reordering
+
+Generic graph-transform helpers live in ``tests.symmetry_helpers`` and are
+reused by every symmetry test in this repo (encoder, head, pipeline).
 """
 
 from __future__ import annotations
@@ -11,7 +14,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from molix.data.types import AtomData, EdgeData, GraphBatch
+from molix.data.types import GraphBatch
 from molrep.embedding.node import DiscreteEmbeddingSpec
 from molrep.utils.equivariance import random_rotation_matrix, rotate_vectors
 from molpot.pooling import LayerPooling, EdgeToNodePooling
@@ -19,70 +22,18 @@ from molpot.heads import AtomicEnergyMLP
 from molpot.derivation import EnergyAggregation, ForceDerivation
 from molzoo import MACE, Allegro
 
+from tests.symmetry_helpers import (
+    make_graph_batch,
+    translate_graph,
+    rotate_graph,
+    permute_graph,
+    recompute_edge_geometry,
+)
+
 
 # ---------------------------------------------------------------------------
-# Helpers: build and transform GraphBatch
+# Pipeline builder (encoder → energy → forces)
 # ---------------------------------------------------------------------------
-
-
-def make_graph_batch(
-    pos: torch.Tensor,
-    Z: torch.Tensor,
-    edge_index: torch.Tensor,
-    batch: torch.Tensor,
-) -> GraphBatch:
-    """Build a GraphBatch from raw tensors, computing bond_diff and bond_dist."""
-    bond_diff = pos[edge_index[:, 1]] - pos[edge_index[:, 0]]
-    bond_dist = bond_diff.norm(dim=-1).clamp(min=1e-6)
-    n_atoms = pos.shape[0]
-    n_edges = edge_index.shape[0]
-    return GraphBatch(
-        atoms=AtomData(Z=Z, pos=pos, batch=batch, batch_size=[n_atoms]),
-        edges=EdgeData(
-            edge_index=edge_index,
-            bond_diff=bond_diff,
-            bond_dist=bond_dist,
-            batch_size=[n_edges],
-        ),
-        batch_size=[],
-    )
-
-
-def translate_graph(batch: GraphBatch, t: torch.Tensor) -> GraphBatch:
-    """Translate all positions by vector t. bond_diff/bond_dist unchanged."""
-    pos = batch["atoms", "pos"] + t
-    return make_graph_batch(
-        pos=pos,
-        Z=batch["atoms", "Z"],
-        edge_index=batch["edges", "edge_index"],
-        batch=batch["atoms", "batch"],
-    )
-
-
-def rotate_graph(batch: GraphBatch, R: torch.Tensor) -> GraphBatch:
-    """Rotate all positions by rotation matrix R."""
-    pos = rotate_vectors(batch["atoms", "pos"], R)
-    return make_graph_batch(
-        pos=pos,
-        Z=batch["atoms", "Z"],
-        edge_index=batch["edges", "edge_index"],
-        batch=batch["atoms", "batch"],
-    )
-
-
-def permute_graph(
-    batch: GraphBatch, perm: torch.Tensor
-) -> GraphBatch:
-    """Permute atom ordering. Returns new GraphBatch with remapped edges."""
-    inv_perm = torch.empty_like(perm)
-    inv_perm[perm] = torch.arange(len(perm))
-
-    pos = batch["atoms", "pos"][perm]
-    Z = batch["atoms", "Z"][perm]
-    batch_idx = batch["atoms", "batch"][perm]
-    edge_index = inv_perm[batch["edges", "edge_index"]]
-
-    return make_graph_batch(pos=pos, Z=Z, edge_index=edge_index, batch=batch_idx)
 
 
 def make_pipeline(encoder, is_edge_encoder: bool = False):
@@ -101,16 +52,20 @@ def make_pipeline(encoder, is_edge_encoder: bool = False):
         pos = batch["atoms", "pos"]
         edge_index = batch["edges", "edge_index"]
 
-        # Recompute from pos for autograd graph
-        bond_diff = pos[edge_index[:, 1]] - pos[edge_index[:, 0]]
-        bond_dist = bond_diff.norm(dim=-1).clamp(min=1e-6)
-        batch["edges", "bond_diff"] = bond_diff
-        batch["edges", "bond_dist"] = bond_dist
+        recompute_edge_geometry(batch)
 
         result = encoder(batch)
 
         if is_edge_encoder:
-            feats = layer_pool(result["edges", "edge_features"])
+            ef = result["edges", "edge_features"]
+            # Allegro emits a DenseNet stack of per-layer scalars in a single
+            # flat ``(E, F·(L+1))`` tensor. Reshape into ``(E, L+1, F)`` so the
+            # pipeline's ``LayerPooling("mean")`` reduces over the layer axis
+            # and yields the same per-edge feature dim ``F`` the downstream
+            # ``AtomicEnergyMLP(hidden_dim=F)`` expects.
+            F_dim = encoder.num_scalar_features
+            ef = ef.view(ef.shape[0], -1, F_dim)
+            feats = layer_pool(ef)
             node_feats = edge_to_node(feats, edge_index, num_nodes=pos.shape[0])
         else:
             node_feats = layer_pool(result["atoms", "node_features"])
@@ -172,6 +127,10 @@ def allegro_encoder():
         num_tensor_features=8,
         r_max=8.0,
         num_layers=2,
+        type_embed_dim=16,
+        latent_mlp_depth=1,
+        latent_mlp_width=16,
+        avg_num_neighbors=4.0,
     )
     encoder.eval()
     return encoder
@@ -208,7 +167,10 @@ class TestTranslationInvariance:
             ref = allegro_encoder(small_molecule.clone())["edges", "edge_features"]
             shifted = allegro_encoder(translate_graph(small_molecule, t))["edges", "edge_features"]
 
-        assert torch.allclose(ref, shifted, atol=1e-5, rtol=1e-5)
+        # Tolerance is float32-ULP — `(pos+t)[j]-(pos+t)[i]` is not
+        # bit-exactly `pos[j]-pos[i]` for `t ≈ 10*randn`, so the encoder
+        # input `bond_diff` differs by ~ULP and propagates linearly.
+        assert torch.allclose(ref, shifted, atol=1e-4, rtol=1e-4)
 
     @pytest.mark.parametrize("seed", SEEDS)
     def test_mace_pipeline_energy_and_forces(self, mace_encoder, small_molecule, seed):

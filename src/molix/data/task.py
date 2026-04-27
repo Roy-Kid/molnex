@@ -74,12 +74,26 @@ class DatasetTask(Task):
 
 
 class BatchTask(Task):
-    """Post-collate batch processing.
+    """Post-collate batch processing. **Extension point — no built-in subclasses.**
 
-    Executed after ``collate_molecules`` inside the DataLoader's
-    ``collate_fn``.  Runs on the hot path — keep it fast.
+    Executed after :func:`~molix.data.collate.collate_molecules` inside the
+    DataLoader's ``collate_fn``. Input and output are both
+    :class:`~molix.data.types.GraphBatch` (nested TensorDict), not raw
+    sample dicts. Runs on the hot path of every training step — keep it
+    fast.
 
-    Examples: force padding, negative sampling, batch augmentation.
+    molix ships no built-in :class:`BatchTask` subclass. The base class
+    exists so custom post-collate transforms can be plugged into
+    :meth:`Pipeline.add` and routed through
+    :attr:`~molix.data.pipeline.PipelineSpec.batch_tasks` to the
+    :class:`~molix.data.datamodule._CollateFn`.
+
+    Use this only when the transform **must** operate on the collated
+    batch (e.g. batch-level augmentation that mixes atoms across graphs,
+    dense-padding for ``torch.compile``). Transforms expressible per
+    sample should subclass :class:`SampleTask` instead — they benefit
+    from per-sample caching, which :class:`BatchTask` cannot (the input
+    shape is not known until collate time).
     """
 
     def execute(self, data: dict) -> dict:

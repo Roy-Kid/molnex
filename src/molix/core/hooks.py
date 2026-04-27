@@ -9,7 +9,7 @@ to override execution order (lower priority = earlier execution).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 import torch.nn as nn
@@ -1062,84 +1062,140 @@ def _apply_activation_checkpointing(
 
 
 class GPUMemoryHook(ScalarHook):
-    """Record CUDA memory usage on every training batch.
+    """Record CUDA memory usage (GiB) on every training batch.
 
-    Writes three scalars to ``state`` each ``on_train_batch_end``:
+    Available metrics (pick any subset via ``metrics=``):
 
-    - ``gpu/alloc_gib``: currently allocated memory (``memory_allocated``).
-    - ``gpu/resv_gib``:  reserved memory (``memory_reserved``).
-    - ``gpu/peak_gib``:  peak ``memory_allocated`` since the last batch;
-      ``reset_peak_memory_stats`` is called after reading so the value always
-      reflects the *window* between consecutive reads — most useful for
-      locating OOM hotspots inside :class:`Log`.
+    ============  ==========================================================
+    name          source
+    ============  ==========================================================
+    ``alloc``     ``torch.cuda.memory_allocated`` → ``gpu/alloc_gib``
+    ``resv``      ``torch.cuda.memory_reserved``  → ``gpu/resv_gib``
+    ``peak``      ``torch.cuda.max_memory_allocated`` → ``gpu/peak_gib``;
+                  ``reset_peak_memory_stats`` is called after reading so the
+                  value always reflects the *window* between consecutive
+                  reads — most useful for locating OOM hotspots.
+    ============  ==========================================================
 
-    Key names are slash/underscore only (no brackets), so they round-trip
-    cleanly through TensorBoard tags, Parquet column names, and filesystem
-    paths.
+    Only the requested metrics are computed and written to ``state``;
+    everything else is left untouched. Default is all three.
 
-    No-op when ``torch.cuda.is_available()`` is ``False``; the keys are still
-    written (as ``0.0``) so headers stay aligned.
+    Args:
+        metrics: Names from ``{"alloc", "resv", "peak"}``. Empty / unknown
+            names raise.
+
+    No-op when ``torch.cuda.is_available()`` is ``False``; the requested
+    keys are still written (as ``0.0``) so headers stay aligned.
     """
 
-    scalar_keys = (
-        ("gpu", "alloc_gib"),
-        ("gpu", "resv_gib"),
-        ("gpu", "peak_gib"),
-    )
+    _AVAILABLE: dict[str, str] = {
+        "alloc": "alloc_gib",
+        "resv": "resv_gib",
+        "peak": "peak_gib",
+    }
 
     _GB = 1024 ** 3  # GiB, matches the ``_gib`` suffix on the keys
+
+    def __init__(self, metrics: Sequence[str] = ("alloc", "resv", "peak")) -> None:
+        metrics = tuple(metrics)
+        if not metrics:
+            raise ValueError("GPUMemoryHook needs at least one metric.")
+        unknown = [m for m in metrics if m not in self._AVAILABLE]
+        if unknown:
+            raise ValueError(
+                f"GPUMemoryHook: unknown metric(s) {unknown}. "
+                f"Available: {sorted(self._AVAILABLE)}."
+            )
+        self.metrics: tuple[str, ...] = metrics
+
+    @property
+    def scalar_keys(self) -> tuple[Path, ...]:
+        return tuple(("gpu", self._AVAILABLE[m]) for m in self.metrics)
 
     def on_train_start(self, trainer, state):
         import torch
 
-        if torch.cuda.is_available():
+        if "peak" in self.metrics and torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
 
     def on_train_batch_end(self, trainer, state, batch, outputs):
         import torch
 
         gpu = state["gpu"]
-        if torch.cuda.is_available():
-            gpu["alloc_gib"] = torch.cuda.memory_allocated() / self._GB
-            gpu["resv_gib"] = torch.cuda.memory_reserved() / self._GB
-            gpu["peak_gib"] = torch.cuda.max_memory_allocated() / self._GB
+        cuda = torch.cuda.is_available()
+        for m in self.metrics:
+            key = self._AVAILABLE[m]
+            if not cuda:
+                gpu[key] = 0.0
+                continue
+            if m == "alloc":
+                gpu[key] = torch.cuda.memory_allocated() / self._GB
+            elif m == "resv":
+                gpu[key] = torch.cuda.memory_reserved() / self._GB
+            elif m == "peak":
+                gpu[key] = torch.cuda.max_memory_allocated() / self._GB
+        if cuda and "peak" in self.metrics:
             torch.cuda.reset_peak_memory_stats()
-        else:
-            gpu["alloc_gib"] = 0.0
-            gpu["resv_gib"] = 0.0
-            gpu["peak_gib"] = 0.0
 
 
-class GPUUtilizationHook(ScalarHook):
+class GPUUtilsHook(ScalarHook):
     """Record GPU SM / memory-bandwidth utilization (%) via NVML per batch.
 
-    Writes two scalars to ``state`` on ``on_train_batch_end``:
+    Available metrics (pick any subset via ``metrics=``):
 
-    - ``gpu/util_pct``:     SM utilization (instantaneous NVML sample).
-    - ``gpu/mem_util_pct``: Memory-bandwidth utilization.
+    ==============  ========================================================
+    name            source
+    ==============  ========================================================
+    ``util``        SM utilization (NVML ``rates.gpu``)    → ``gpu/util_pct``
+    ``mem_util``    Memory-bandwidth utilization
+                    (NVML ``rates.memory``)               → ``gpu/mem_util_pct``
+    ==============  ========================================================
 
-    Backed by NVIDIA's official ``nvidia-ml-py`` PyPI package.
+    Only the requested metrics are written to ``state``; default is both.
 
-    The NVML call takes ~100µs and does not trigger a CUDA
-    synchronization, so it is safe to run every step. Raises at
-    ``on_train_start`` if CUDA or ``nvidia-ml-py`` is unavailable rather
-    than silently reporting zeros.
+    Backed by NVIDIA's official ``nvidia-ml-py`` PyPI package. The NVML
+    call takes ~100 µs and does not trigger a CUDA synchronization, so
+    it is safe to run every step. Raises at ``on_train_start`` if CUDA
+    or ``nvidia-ml-py`` is unavailable rather than silently reporting
+    zeros.
+
+    Args:
+        metrics: Names from ``{"util", "mem_util"}``.
     """
 
-    scalar_keys = (("gpu", "util_pct"), ("gpu", "mem_util_pct"))
+    _AVAILABLE: dict[str, str] = {
+        "util": "util_pct",
+        "mem_util": "mem_util_pct",
+    }
+
+    def __init__(self, metrics: Sequence[str] = ("util", "mem_util")) -> None:
+        metrics = tuple(metrics)
+        if not metrics:
+            raise ValueError("GPUUtilsHook needs at least one metric.")
+        unknown = [m for m in metrics if m not in self._AVAILABLE]
+        if unknown:
+            raise ValueError(
+                f"GPUUtilsHook: unknown metric(s) {unknown}. "
+                f"Available: {sorted(self._AVAILABLE)}."
+            )
+        self.metrics: tuple[str, ...] = metrics
+
+    @property
+    def scalar_keys(self) -> tuple[Path, ...]:
+        return tuple(("gpu", self._AVAILABLE[m]) for m in self.metrics)
 
     def on_train_start(self, trainer, state):
         import torch
 
         if not torch.cuda.is_available():
             raise RuntimeError(
-                "GPUUtilizationHook requires CUDA but torch.cuda.is_available() is False."
+                "GPUUtilsHook requires CUDA but torch.cuda.is_available() is False."
             )
         try:
             import pynvml as nvml
         except ImportError as exc:
             raise ImportError(
-                "GPUUtilizationHook requires the official `nvidia-ml-py` package "
+                "GPUUtilsHook requires the official `nvidia-ml-py` package "
                 "(`pip install nvidia-ml-py`)."
             ) from exc
 
@@ -1151,8 +1207,12 @@ class GPUUtilizationHook(ScalarHook):
     def on_train_batch_end(self, trainer, state, batch, outputs):
         rates = self._nvml.nvmlDeviceGetUtilizationRates(self._handle)
         gpu = state["gpu"]
-        gpu["util_pct"] = float(rates.gpu)
-        gpu["mem_util_pct"] = float(rates.memory)
+        for m in self.metrics:
+            key = self._AVAILABLE[m]
+            if m == "util":
+                gpu[key] = float(rates.gpu)
+            elif m == "mem_util":
+                gpu[key] = float(rates.memory)
 
     def on_train_end(self, trainer, state):
         nvml = getattr(self, "_nvml", None)
@@ -1171,6 +1231,33 @@ def _parse_fmt_width(fmt: str) -> int:
 
     m = re.search(r"(\d+)", fmt)
     return int(m.group(1)) if m else 12
+
+
+# Sentinel rendered when a logged path has no value in ``state`` yet. Kept
+# distinct from ``"nan"`` so a real numerical NaN (genuine model divergence)
+# stays visually unambiguous in the table.
+_MISSING_CELL = "—"
+
+
+def _render_cell(value: Any, fmt: str, width: int) -> str:
+    """Format one ``Log`` table cell.
+
+    * Numeric (int / non-NaN float) → ``fmt.format(value)``.
+    * Real numerical NaN → ``"nan"`` (right-aligned to ``width``).
+    * Anything else (``None``, missing path, non-scalar) →
+      :data:`_MISSING_CELL`. Reserves ``"nan"`` for genuine numerical NaN
+      so silent path-resolution failures can no longer masquerade as
+      training divergence.
+    """
+    if isinstance(value, bool):
+        return fmt.format(int(value))
+    if isinstance(value, int):
+        return fmt.format(value)
+    if isinstance(value, float):
+        if value != value:
+            return f"{'nan':>{width}}"
+        return fmt.format(value)
+    return f"{_MISSING_CELL:>{width}}"
 
 
 def _as_scalar(value) -> float | int | None:
@@ -1193,29 +1280,60 @@ def _as_scalar(value) -> float | int | None:
     return None
 
 
+# State paths populated by :class:`~molix.core.trainer.Trainer` itself or
+# by the default train/eval steps — not advertised by any hook, but always
+# available. Used by :meth:`Log._validate_keys` so users can log them
+# without registering a hook for them.
+_BUILTIN_STATE_PATHS: frozenset = frozenset({
+    "epoch",
+    "global_step",
+    "stage",
+    "steps_since_last_eval",
+    "best_metric",
+    ("train", "loss"),
+    ("eval", "loss"),
+})
+
+
+def _normalize_key(item) -> Path:
+    """Coerce a user-provided key into the canonical :data:`Path` form.
+
+    A slash-separated string like ``"train/loss"`` is parsed into the
+    tuple path ``("train", "loss")`` — this is the same display
+    convention used by :func:`molix.core.state.display`, so users can
+    paste the column name they see in the log straight back into
+    ``Log(keys=...)``. A bare string with no ``"/"`` is preserved as a
+    top-level lookup (e.g. ``"epoch"``). Tuples pass through unchanged.
+    """
+    if isinstance(item, tuple):
+        return item
+    if isinstance(item, str):
+        return tuple(item.split("/")) if "/" in item else item
+    raise TypeError(
+        f"Log keys must be str, tuple, or ScalarHook — got {type(item).__name__}"
+    )
+
+
 def _collect_keys(items) -> list[Path]:
     """Flatten a mix of paths and :class:`ScalarHook` instances.
 
     Accepts::
 
-        keys=[("train", "loss"), step_speed_hook, ("gpu", "peak_gib")]
+        keys=[("train", "loss"), step_speed_hook, "gpu/peak_gib"]
 
-    Each entry is either a :data:`~molix.core.state.Path` (bare string for
-    a top-level key, tuple for a nested one) or a :class:`ScalarHook`
-    instance whose ``scalar_keys`` are expanded. Duplicates are
-    preserved in order of first occurrence.
+    Each entry is either a :data:`~molix.core.state.Path` (bare string
+    for a top-level key, tuple for a nested one, or a slash-separated
+    string like ``"train/loss"`` that mirrors the rendered column name)
+    or a :class:`ScalarHook` instance whose ``scalar_keys`` are expanded.
+    Duplicates are preserved in order of first occurrence.
     """
     seen: set[Path] = set()
     out: list[Path] = []
     for item in items:
         if isinstance(item, ScalarHook):
             paths = tuple(item.scalar_keys)
-        elif isinstance(item, (str, tuple)):
-            paths = (item,)
         else:
-            raise TypeError(
-                f"Log keys must be str, tuple, or ScalarHook — got {type(item).__name__}"
-            )
+            paths = (_normalize_key(item),)
         for p in paths:
             if p not in seen:
                 seen.add(p)
@@ -1349,7 +1467,40 @@ class Log(BaseHook):
         # Invalidate header so the next row re-prints column names.
         self._rows_since_header = self.header_every_n_rows
 
+    def _validate_keys(self, trainer) -> None:
+        """Raise if any configured key isn't covered by the trainer setup.
+
+        Catches the silent-``nan`` failure mode where a typo or wrong-format
+        key (``"train/loss"`` used to be treated as a top-level lookup,
+        always returning ``None``, rendered as ``"nan"``) hides as a
+        plausible numerical divergence in the log. After parsing
+        slash-strings into tuples in :func:`_collect_keys`, this check
+        confirms each path is either a known built-in or advertised by
+        some registered :class:`ScalarHook`.
+
+        Skipped when ``trainer is None`` so unit tests can drive ``Log``
+        without standing up a full :class:`Trainer`.
+        """
+        if trainer is None:
+            return
+        advertised: set[Path] = set(_BUILTIN_STATE_PATHS)
+        for hook in trainer.hooks:
+            if isinstance(hook, ScalarHook):
+                advertised.update(hook.scalar_keys)
+
+        unknown = [p for p in self.keys if p not in advertised]
+        if unknown:
+            rendered = [display(p) for p in unknown]
+            available = sorted({display(p) for p in advertised})
+            raise ValueError(
+                f"Log key(s) {rendered!r} are not advertised by any "
+                f"registered ScalarHook nor known as built-in state paths. "
+                f"Either register a hook that populates them or remove them "
+                f"from `keys`. Available paths: {available!r}."
+            )
+
     def on_train_start(self, trainer, state):
+        self._validate_keys(trainer)
         self._rows_since_header = 0
         self._last_epoch = int(state.get("epoch", 0))
         # Publish table width so off-hook announcers align with our columns.
@@ -1409,10 +1560,6 @@ class Log(BaseHook):
                 f"{values['epoch']:>{width}d}",
             ]
             for path in self.keys:
-                v = values.get(display(path))
-                if isinstance(v, (int, float)) and not (isinstance(v, float) and v != v):
-                    parts.append(self.fmt.format(v))
-                else:
-                    parts.append(f"{'nan':>{width}}")
+                parts.append(_render_cell(values.get(display(path)), self.fmt, width))
             print(" ".join(parts), flush=True)
         self._rows_since_header += 1

@@ -1,17 +1,38 @@
-# Batch Schema Reference
+# Data Schema Reference
 
-MolNex uses nested `TensorDict` subclasses (defined in `molix.data.types`) as its batch format. Each level has its own batch size, enabling natural per-atom, per-edge, and per-graph operations.
+MolNex speaks **two** shapes at different stages of the data pipeline. The
+shapes are intentionally different — you must know which side you're on:
 
-## Sample Schema (single molecule, plain dict)
+| Stage | Container | Example access |
+|---|---|---|
+| Pre-collate (source, pipeline task I/O, `MmapDataset[i]`) | **flat `dict`** | `sample["Z"]`, `sample["edge_index"]` |
+| Post-collate (`GraphBatch` from `collate_molecules`) | **nested `TensorDict`** | `batch["atoms", "Z"]`, `batch["edges", "edge_index"]` |
 
-Individual samples from `DataSource.__getitem__` are plain Python dicts:
+The single conversion point is `collate_molecules` (invoked by
+`DataModule._CollateFn`). Tuple-key access like `batch["atoms", "Z"]` is a
+`TensorDict`-only feature and **does not work** on a raw sample dict — that's
+why `sample["edges", "edge_index"]` raises `KeyError`.
+
+Nested `TensorDict` subclasses (defined in `molix.data.types`) are the
+batch-side containers. Each level carries its own batch size, enabling
+natural per-atom, per-edge, and per-graph operations.
+
+## Sample Schema (pre-collate, single molecule, plain flat dict)
+
+Individual samples from `DataSource.__getitem__`, pipeline task I/O, and
+`MmapDataset[i]` / `CachedDataset[i]` are plain Python dicts with **flat
+top-level keys** (no `"atoms"` / `"edges"` nesting):
 
 - `Z`: `LongTensor[N]` - Atomic numbers
 - `pos`: `FloatTensor[N, 3]` - Atom positions
-- `edge_index` (optional): `LongTensor[E, 2]` - Edge source-target pairs
-- `bond_diff` (optional): `FloatTensor[E, 3]` - Edge vectors
-- `bond_dist` (optional): `FloatTensor[E]` - Edge distances
+- `edge_index` (optional, added by `NeighborList`): `LongTensor[E, 2]` - Edge source-target pairs
+- `bond_diff` (optional, added by `NeighborList`): `FloatTensor[E, 3]` - Edge vectors
+- `bond_dist` (optional, added by `NeighborList`): `FloatTensor[E]` - Edge distances
 - `targets` (optional): `dict[str, Tensor]` - Target labels
+
+Access with flat keys: `sample["Z"]`, `sample["edge_index"]`,
+`sample["targets"]["U0"]`. The nested tuple-key syntax below is for the
+post-collate `GraphBatch` only.
 
 ## Batch Schema (nested TensorDict)
 
@@ -37,12 +58,13 @@ GraphBatch (batch_size=[])
 
 | Type | Extends | batch_size | Purpose |
 |------|---------|------------|---------|
-| `AtomData` | `TensorDict` | `[N]` | Per-atom tensors |
-| `NodeRepAtoms` | `AtomData` | `[N]` | Adds `node_features` from encoder |
-| `EdgeData` | `TensorDict` | `[E]` | Per-edge tensors |
-| `EdgeRepEdges` | `EdgeData` | `[E]` | Adds `edge_features` from encoder |
+| `AtomData` | `TensorDict` | `[N]` | Per-atom tensors (encoder adds `node_features` in place) |
+| `EdgeData` | `TensorDict` | `[E]` | Per-edge tensors (encoder adds `edge_features` in place) |
 | `GraphData` | `TensorDict` | `[B]` | Per-graph tensors + targets |
 | `GraphBatch` | `TensorDict` | `[]` | Top-level container |
+
+Encoder outputs are written into the existing `AtomData` / `EdgeData`
+sub-dicts by key addition — no subclass swap.
 
 ## Access Patterns
 

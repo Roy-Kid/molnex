@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import math
-
 import pytest
 import torch
 
@@ -11,7 +9,7 @@ from molix.data.types import AtomData, EdgeData, GraphBatch, GraphData
 from molpot.heads import EdgeEnergyHead
 
 
-def _stub_batch(*, n_atoms=3, n_edges=6, n_layers=2, feat_dim=8):
+def _stub_batch(*, n_atoms=3, n_edges=6, feat_dim=8):
     torch.manual_seed(0)
     edge_index = torch.tensor(
         [[0, 1], [1, 0], [1, 2], [2, 1], [0, 2], [2, 0]], dtype=torch.long
@@ -28,7 +26,7 @@ def _stub_batch(*, n_atoms=3, n_edges=6, n_layers=2, feat_dim=8):
         bond_dist=torch.rand(n_edges) + 0.5,
         batch_size=[n_edges],
     )
-    edges["edge_features"] = torch.randn(n_edges, n_layers, feat_dim)
+    edges["edge_features"] = torch.randn(n_edges, feat_dim)
     graphs = GraphData(num_atoms=torch.tensor([n_atoms]), batch_size=[1])
     return GraphBatch(atoms=atoms, edges=edges, graphs=graphs, batch_size=[])
 
@@ -50,51 +48,6 @@ class TestShape:
         assert "E" in out
 
 
-class TestLayerReduction:
-    def test_last_picks_final_layer(self):
-        head = EdgeEnergyHead(
-            input_dim=8, hidden_dim=4, avg_num_neighbors=3.0, layer_reduction="last"
-        )
-        b = _stub_batch(n_layers=3)
-        # Manually reduce to what "last" should see.
-        feats = b["edges", "edge_features"][:, -1]
-        expected_edge_e = head.mlp(feats).squeeze(-1) / math.sqrt(3.0)
-        # We can't easily reproduce the scatter, but we can check that a
-        # single-layer batch gives the same result as a 3-layer batch with
-        # identical last-layer content.
-        b_single = _stub_batch(n_layers=1)
-        b_single["edges", "edge_features"] = feats.unsqueeze(1)
-        with torch.no_grad():
-            e_multi = head(b)["energy"]
-            e_single = head(b_single)["energy"]
-        torch.testing.assert_close(e_multi, e_single, rtol=1e-5, atol=1e-5)
-
-    def test_sum_equals_sum_of_layer_features(self):
-        """``sum`` reduction must see exactly the sum of per-layer feature tensors."""
-        head = EdgeEnergyHead(
-            input_dim=8, hidden_dim=4, avg_num_neighbors=3.0,
-            layer_reduction="sum",
-        )
-        b = _stub_batch(n_layers=3)
-        b_flat = _stub_batch(n_layers=1)
-        b_flat["edges", "edge_features"] = (
-            b["edges", "edge_features"].sum(dim=1).unsqueeze(1)
-        )
-        with torch.no_grad():
-            e_multi = head(b)["energy"]
-            e_flat = head(b_flat)["energy"]
-        torch.testing.assert_close(e_multi, e_flat, rtol=1e-5, atol=1e-5)
-
-    def test_reject_invalid_reduction(self):
-        with pytest.raises(ValueError, match="layer_reduction"):
-            EdgeEnergyHead(
-                input_dim=8,
-                hidden_dim=4,
-                avg_num_neighbors=3.0,
-                layer_reduction="max",  # not supported
-            )
-
-
 class TestNeighborNormalization:
     def test_sqrt_normalization_is_applied(self):
         """Halving ``avg_num_neighbors`` scales edge energy by √2."""
@@ -109,15 +62,46 @@ class TestNeighborNormalization:
         # √16 / √4 = 2 → e1 should be twice e2.
         torch.testing.assert_close(e1, 2.0 * e2, rtol=1e-5, atol=1e-5)
 
-    def test_per_source_fallback_runs(self):
-        head = EdgeEnergyHead(input_dim=8, hidden_dim=4, avg_num_neighbors=None)
-        out = head(_stub_batch())
-        assert out["energy"].shape == (1,)
-        assert torch.isfinite(out["energy"]).all()
-
     def test_rejects_non_positive_avg_num_neighbors(self):
         with pytest.raises(ValueError, match="avg_num_neighbors"):
             EdgeEnergyHead(input_dim=8, hidden_dim=4, avg_num_neighbors=0.0)
+
+
+class TestLinearReadout:
+    """Upstream ``edge_eng_mlp_nonlinearity=null`` ⇒ readout is purely linear.
+
+    With ``ScalarMLPFunction(nonlinearity=None)``, two ``Linear`` layers in
+    series collapse to a single linear map of the input. Energy must therefore
+    be linear in ``edge_features`` (up to scatter-sum, which is also linear).
+    """
+
+    def test_energy_is_linear_in_edge_features(self):
+        torch.manual_seed(7)
+        b = _stub_batch()
+        head = EdgeEnergyHead(input_dim=8, hidden_dim=4, avg_num_neighbors=3.0)
+
+        # Energy at (a) features f, (b) features 2f, (c) features f + g should
+        # satisfy E(2f) = 2 E(f) and E(f+g) = E(f) + E(g) (within numerical noise).
+        f = b["edges", "edge_features"]
+        g = torch.randn_like(f)
+
+        b1 = b.clone()
+        b1["edges", "edge_features"] = f
+        b2 = b.clone()
+        b2["edges", "edge_features"] = 2.0 * f
+        b3 = b.clone()
+        b3["edges", "edge_features"] = f + g
+        b4 = b.clone()
+        b4["edges", "edge_features"] = g
+
+        with torch.no_grad():
+            e1 = head(b1)["energy"]
+            e2 = head(b2)["energy"]
+            e3 = head(b3)["energy"]
+            e4 = head(b4)["energy"]
+
+        torch.testing.assert_close(e2, 2.0 * e1, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(e3, e1 + e4, rtol=1e-5, atol=1e-5)
 
 
 class TestEmptyGraph:
@@ -135,7 +119,7 @@ class TestEmptyGraph:
             bond_dist=torch.empty(0),
             batch_size=[0],
         )
-        edges["edge_features"] = torch.empty(0, 2, 8)
+        edges["edge_features"] = torch.empty(0, 8)
         graphs = GraphData(num_atoms=torch.tensor([1]), batch_size=[1])
         b = GraphBatch(atoms=atoms, edges=edges, graphs=graphs, batch_size=[])
 

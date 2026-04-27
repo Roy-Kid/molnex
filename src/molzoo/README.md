@@ -4,31 +4,29 @@ Molecular encoder zoo. Provides encoder-only architectures (MACE, Allegro) witho
 
 ## Model Specifications
 
-Each model in this package ships with **three sibling artifacts** in `specs/`:
+Each model in this package ships with **one** spec artifact in `specs/`:
 
-- `<encoder>.md` — paper-aligned spec (architecture, module math, I/O contract, symmetries, deviations).
-- `<encoder>_walkthrough.md` — code↔spec↔paper audit (✅ ℹ️ ⚠️ 🆚 verdicts + run-linked investigations).
-- `<encoder>_experiments.csv` — append-only run log (date, commit, dataset, config tag, MAE, fwd/bwd ms).
+- `<encoder>.md` — paper↔code↔reference traceable spec (10-section template; includes I/O, paper↔code mapping, adaptation ledger, benchmark contract with embedded run log).
 
 **Read the spec before modifying the model** — any change to a module's math MUST be reflected in the corresponding spec.
 
-| Model   | Spec | Walkthrough | Experiments | Paper |
-|---------|------|-------------|-------------|-------|
-| Allegro | [`specs/allegro.md`](specs/allegro.md) | [`specs/allegro_walkthrough.md`](specs/allegro_walkthrough.md) | [`specs/allegro_experiments.csv`](specs/allegro_experiments.csv) | Musaelian et al., Nat. Commun. 2023 ([arXiv](https://arxiv.org/abs/2204.05249)) |
-| MACE    | *(todo)* | *(todo)* | *(todo)* | Batatia et al., NeurIPS 2022 ([arXiv](https://arxiv.org/abs/2206.07697)) |
+| Model   | Spec | Paper |
+|---------|------|-------|
+| Allegro | [`specs/allegro.md`](specs/allegro.md) | Musaelian et al., Nat. Commun. 2023 ([arXiv](https://arxiv.org/abs/2204.05249)) |
+| MACE    | *(todo)* | Batatia et al., NeurIPS 2022 ([arXiv](https://arxiv.org/abs/2206.07697)) |
 
 ### Spec workflow
 
-Three skills + one agent maintain these artifacts as a closed loop:
+One skill + one agent keep `<encoder>.md` aligned with code and paper:
 
-| Trigger | Command | Writes |
+| Trigger | Command | Effect |
 |---------|---------|--------|
-| Introducing a new encoder | `/molzoo-spec-new <encoder> <arxiv_url>` | seeds `<encoder>.md` + `_walkthrough.md` + `_experiments.csv` |
-| After a benchmark or training run | `/molzoo-spec-log <encoder>` | appends one row to `_experiments.csv`; prompts `molzoo-auditor` on MAE regression or dirty tree |
-| Debugging a question | `/molzoo-spec-lookup <encoder> <topic>` | read-only; refuses to fabricate, suggests `molzoo-auditor` on a miss |
-| Verify code vs paper | `molzoo-auditor` agent | appends ≥ 1 verdict row to `_walkthrough.md`; edits `<encoder>.md` only on ⚠️/🆚 |
+| Introducing a new encoder | `/molzoo-spec <encoder> --paper <arxiv_url>` | seeds `<encoder>.md` from the 10-section template |
+| Debugging a question | `/molzoo-spec <encoder> <topic>` | read-only lookup; refuses to fabricate, suggests `molzoo-auditor` on a miss |
+| After a benchmark or training run | `/molzoo-spec <encoder> --log <k=v ...>` | appends one row to §7.4 (Run log) of `<encoder>.md`; warns + suggests `molzoo-auditor` on MAE regression or dirty tree |
+| Verify code vs paper | `molzoo-auditor` agent | **prints** ≥ 1 verdict report to the developer; on ⚠️/🆚 patches `<encoder>.md` (§2/§3.2/§4/§5) — the spec diff is the persistent trace |
 
-**The loop never closes silently.** Every operation either updates an artifact or explicitly delegates the update. See `CLAUDE.md` for the full contract.
+**The loop never closes silently.** Every operation either updates the spec, prints a verdict, or explicitly delegates. See `CLAUDE.md` for the full contract.
 
 ## Input Conventions
 

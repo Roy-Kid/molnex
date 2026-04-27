@@ -5,4 +5,4 @@ they are the authoritative description of a feature.
 
 | Slug | Title | Status | Owner agent | Created |
 |------|-------|--------|-------------|---------|
-| _(none yet)_ | | | | |
+| [multipole-layer](multipole-layer.md) | Direct permanent multipole layer over Allegro (`molpot.heads.PermMultipoleHead`) | draft | `mn-impl` | 2026-04-25 |

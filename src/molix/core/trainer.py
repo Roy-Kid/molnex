@@ -17,7 +17,7 @@ from molix.config import set_precision as _set_precision_global
 from molix.core.checkpoint import Checkpoint, CheckpointBackend, TorchSaveBackend
 from molix.core.hooks import Hook
 from molix.core.state import Stage, TrainState, resolve
-from molix.core.steps import DefaultEvalStep, DefaultTrainStep, Step
+from molix.core.steps import DefaultEvalStep, DefaultTrainStep, Step, batch_to_device
 from molix.data.datamodule import DataModuleProtocol
 
 logger = _logger_mod.getLogger(__name__)
@@ -80,9 +80,11 @@ class Trainer:
             device: Target device for the model (e.g. ``"cuda"``, ``"cuda:0"``,
                    ``"cpu"``). When set, the model is moved to this device at the
                    start of :meth:`train`. Each batch is then automatically moved
-                   to the same device by the default steps. If ``None`` (default),
-                   the model is left on its current device and device placement is
-                   the caller's responsibility.
+                   to the same device by the trainer loop (before hooks and the
+                   step see it), so hooks and steps always observe a
+                   device-aligned batch. If ``None`` (default), the model is
+                   left on its current device and batches are still moved to
+                   whatever device the model currently sits on.
 
         Raises:
             ValueError: If eval_every_n_steps is <= 0
@@ -324,7 +326,9 @@ class Trainer:
             self.state.set_stage(Stage.TRAIN)
             self.model.train()
 
+            model_device = next(self.model.parameters()).device
             for batch in datamodule.train_dataloader():
+                batch = batch_to_device(batch, model_device)
                 self._call_hooks("on_train_batch_start", self, self.state, batch)
                 outputs = self.train_step.on_train_batch(self, self.state, batch)
                 self._call_hooks("on_train_batch_end", self, self.state, batch, outputs)
@@ -556,7 +560,9 @@ class Trainer:
         self.state.set_stage(Stage.EVAL)
         self.model.eval()
 
+        model_device = next(self.model.parameters()).device
         for batch in datamodule.val_dataloader():
+            batch = batch_to_device(batch, model_device)
             self._call_hooks("on_eval_batch_start", self, self.state, batch)
             outputs = self.eval_step.on_eval_batch(self, self.state, batch)
             self._call_hooks("on_eval_batch_end", self, self.state, batch, outputs)

@@ -23,6 +23,29 @@ leaves a partial file behind (atomic ``os.rename``).
 Rank / DDP coordination is owned by
 :meth:`molix.data.pipeline.PipelineSpec.cache` — user code never touches the
 rank env var directly.
+
+Why single-file packed-bucket and not ``TensorDict.memmap_()``
+--------------------------------------------------------------
+
+``LazyStackedTensorDict.memmap_(prefix)`` writes **one subdirectory per
+sample** (``prefix/<i>/<key>.memmap`` + companion ``.shape.memmap`` for
+variable shapes). For QM9-scale datasets (130k molecules × ~8 leaves per
+sample ≈ 1M files + ~260k directories) this blows past typical inode
+budgets on HPC shared filesystems and makes ``rsync`` / ``tar`` / ``rm``
+painfully slow.
+
+:class:`PackedCache` stores ``O(schema_keys)`` concatenated tensors in a
+**single** file, with ``atom_ptr`` / ``edge_ptr`` cumsum pointers locating
+each sample's slice. Zero-copy mmap read is preserved
+(``torch.load(mmap=True)`` on the packed tensors); one file replaces the
+ragged directory tree. The layout is purpose-built for fixed-schema
+molecular datasets; ``TensorDict.memmap_`` is purpose-built for
+heterogeneous RLHF-style rollout buffers. They solve different problems.
+
+**Do not migrate the cache format to ``TensorDict.memmap_``.** If you
+need TD-native memmap semantics for a specific downstream use case, add a
+thin view/adapter on top of :class:`PackedCache` rather than changing the
+on-disk format.
 """
 
 from __future__ import annotations

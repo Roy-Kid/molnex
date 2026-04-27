@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
-from typing import Protocol, runtime_checkable
+from collections.abc import Iterable, Sequence
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
 
 from molix.data.collate import DEFAULT_TARGET_SCHEMA, TargetSchema, collate_molecules
-from molix.data.dataset import BaseDataset
+from molix.data.dataset import BaseDataset, MmapDataset, SubsetDataset, split_indices
 from molix.data.pipeline import TaskEntry
+from molix.data.source import SubsetSource
+
+if TYPE_CHECKING:
+    from molix.data.pipeline import PipelineSpec
 
 
 # ---------------------------------------------------------------------------
@@ -115,9 +120,9 @@ class DataModule:
         target_schema: TargetSchema | None = None,
         batch_tasks: Sequence[TaskEntry] | None = None,
         batch_size: int = 32,
-        num_workers: int = 0,
+        num_workers: int = 4,
         pin_memory: bool = True,
-        persistent_workers: bool = False,
+        persistent_workers: bool = True,
         prefetch_factor: int | None = None,
         seed: int = 42,
         multiprocessing_context: str | None = "spawn",
@@ -140,6 +145,91 @@ class DataModule:
 
         self._train_sampler: DistributedSampler | None = None
         self._val_sampler: DistributedSampler | None = None
+        # Set by :meth:`from_cached_pipeline`; ``None`` under direct construction.
+        self.full_dataset: BaseDataset | None = None
+        self.test_dataset: BaseDataset | None = None
+        self.split_indices: tuple[list[int], ...] | None = None
+
+    # -- Factory ------------------------------------------------------------
+
+    @classmethod
+    def from_cached_pipeline(
+        cls,
+        pipe: "PipelineSpec",
+        source: Any,
+        *,
+        base_dir: str | Path,
+        split_sizes: Sequence[int],
+        seed: int = 42,
+        extra: dict[str, str] | None = None,
+        target_schema: TargetSchema | None = None,
+        **dataloader_kwargs: Any,
+    ) -> "DataModule":
+        """One-shot: fit pipeline on train split, cache, and build a DataModule.
+
+        Absorbs the boilerplate
+        ``pipe.cache(source, ...) → MmapDataset → SubsetDataset → DataModule``
+        found in every training script, and wires the fit-source to the
+        training split so the fitted state matches the split the model
+        trains on.
+
+        Args:
+            pipe: A built :class:`~molix.data.pipeline.PipelineSpec`.
+            source: Full :class:`~molix.data.source.DataSource` (all
+                samples; this factory handles splitting).
+            base_dir: Directory for the cache file.
+            split_sizes: Per-split sample counts. Length 2 for
+                ``(train, val)`` or length 3 for ``(train, val, test)``.
+                Sum must be ``<= len(source)``.
+            seed: RNG seed for the random permutation used to produce
+                split indices.
+            extra: Extra identity fields for the cache key (same meaning
+                as in :meth:`PipelineSpec.cache`).
+            target_schema: Override graph-level vs atom-level target
+                classification. Defaults to
+                ``getattr(source, "TARGET_SCHEMA", DEFAULT_TARGET_SCHEMA)``.
+            **dataloader_kwargs: Forwarded to ``cls(...)`` (batch_size,
+                num_workers, pin_memory, persistent_workers, etc.).
+
+        Returns:
+            A ready-to-use :class:`DataModule`. ``dm.full_dataset`` gives
+            access to ``.stats()``; ``dm.test_dataset`` holds the test
+            split when ``split_sizes`` has three entries;
+            ``dm.split_indices`` holds the per-split index lists (useful
+            for reproducibility logging).
+        """
+        if len(split_sizes) < 2:
+            raise ValueError(
+                f"split_sizes must have >= 2 entries (train, val[, test]), "
+                f"got {split_sizes!r}"
+            )
+        # split_indices validates sum(sizes) <= n and raises ValueError otherwise.
+        indices = split_indices(len(source), split_sizes, seed=seed)
+        fit_source = SubsetSource(source, indices[0])
+        packed = pipe.cache(
+            source,
+            base_dir=Path(base_dir),
+            fit_source=fit_source,
+            extra=extra,
+        )
+        full = MmapDataset(packed.sink)
+        subsets = [SubsetDataset(full, idx) for idx in indices]
+
+        schema = target_schema
+        if schema is None:
+            schema = getattr(source, "TARGET_SCHEMA", None) or DEFAULT_TARGET_SCHEMA
+
+        dm = cls(
+            subsets[0],
+            subsets[1],
+            target_schema=schema,
+            batch_tasks=pipe.batch_tasks,
+            **dataloader_kwargs,
+        )
+        dm.full_dataset = full
+        dm.test_dataset = subsets[2] if len(subsets) >= 3 else None
+        dm.split_indices = tuple(indices)
+        return dm
 
     def _worker_context(self) -> str | None:
         """Start method passed to :class:`DataLoader`, or ``None`` for sync.

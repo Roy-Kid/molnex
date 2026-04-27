@@ -72,7 +72,9 @@ def test_log_prints_row_every_n_steps(capsys):
     assert "5" in lines[1].split()[-1]  # loss=5.0 at step=5
 
 
-def test_log_handles_missing_keys_as_nan(capsys):
+def test_log_renders_missing_path_as_dash(capsys):
+    """Missing paths render as ``—``, not ``nan`` — keeps real numerical NaN
+    visually unambiguous in the log."""
     log = Log(1, keys=[("not", "present")])
     state = TrainState()
 
@@ -80,7 +82,67 @@ def test_log_handles_missing_keys_as_nan(capsys):
     capsys.readouterr()
     log.on_train_batch_end(trainer=None, state=state, batch=None, outputs=None)
     row = capsys.readouterr().out.strip()
+    assert "—" in row
+    assert "nan" not in row
+
+
+def test_log_renders_real_nan_as_nan(capsys):
+    """A real numerical NaN must still render as ``"nan"`` so divergence is
+    visible. Distinct from the missing-path marker."""
+    log = Log(1, keys=[("train", "loss")])
+    state = TrainState()
+
+    log.on_train_start(trainer=None, state=state)
+    capsys.readouterr()
+    state["global_step"] = 0
+    state["train"]["loss"] = float("nan")
+    log.on_train_batch_end(trainer=None, state=state, batch=None, outputs=None)
+    row = capsys.readouterr().out.strip()
     assert "nan" in row
+    assert "—" not in row
+
+
+def test_log_accepts_slash_string_keys(capsys):
+    """A slash-separated string key (``"train/loss"``) is parsed into a
+    tuple path so it resolves the same as ``("train", "loss")``."""
+    log = Log(1, keys=["train/loss", "performance/step_per_second"])
+    assert log.keys == [("train", "loss"), ("performance", "step_per_second")]
+
+
+def test_log_validates_keys_against_advertised_paths():
+    """Startup validation rejects keys not advertised by any registered hook
+    nor in the built-in set — catches the silent-nan failure mode."""
+    class _FakeTrainer:
+        hooks = []  # no hooks registered → only built-ins are advertised
+
+    # ``("train", "loss")`` is a built-in (DefaultTrainStep) — accepted.
+    Log(1, keys=[("train", "loss")]).on_train_start(
+        trainer=_FakeTrainer(), state=TrainState()
+    )
+
+    # ``("performance", "step_per_second")`` requires StepSpeedHook —
+    # not registered → ValueError.
+    log = Log(1, keys=[("performance", "step_per_second")])
+    with pytest.raises(ValueError, match="not advertised"):
+        log.on_train_start(trainer=_FakeTrainer(), state=TrainState())
+
+
+def test_log_validation_accepts_advertised_hook_paths(capsys):
+    """A key advertised by a registered ScalarHook passes validation."""
+    speed = StepSpeedHook()
+
+    class _FakeTrainer:
+        hooks = [speed]
+
+    log = Log(1, keys=["performance/step_per_second"])
+    log.on_train_start(trainer=_FakeTrainer(), state=TrainState())  # no raise
+
+
+def test_log_validation_skipped_when_trainer_none():
+    """``trainer=None`` disables validation so unit tests can drive Log
+    without a real Trainer."""
+    log = Log(1, keys=[("not", "advertised")])
+    log.on_train_start(trainer=None, state=TrainState())  # no raise
 
 
 def test_log_rejects_bad_key_type():
@@ -215,6 +277,27 @@ def test_gpu_memory_hook_noop_on_cpu():
         assert state["gpu"]["alloc_gib"] == 0.0
         assert state["gpu"]["resv_gib"] == 0.0
         assert state["gpu"]["peak_gib"] == 0.0
+
+
+def test_gpu_memory_hook_selects_metrics():
+    hook = GPUMemoryHook(metrics=("peak",))
+    assert hook.scalar_keys == (("gpu", "peak_gib"),)
+
+    state = TrainState()
+    hook.on_train_start(trainer=None, state=state)
+    hook.on_train_batch_end(trainer=None, state=state, batch=None, outputs=None)
+
+    # Only the requested key is written; others are absent.
+    assert "peak_gib" in state["gpu"]
+    assert "alloc_gib" not in state["gpu"]
+    assert "resv_gib" not in state["gpu"]
+
+
+def test_gpu_memory_hook_rejects_unknown_metrics():
+    with pytest.raises(ValueError, match="unknown metric"):
+        GPUMemoryHook(metrics=("alloc", "bogus"))
+    with pytest.raises(ValueError, match="at least one metric"):
+        GPUMemoryHook(metrics=())
 
 
 def test_step_speed_hook_is_scalar_hook():

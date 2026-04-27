@@ -168,13 +168,21 @@ def test_integration_with_allegro_encoder(molecular_batch):
         num_tensor_features=8,
         r_max=5.0,
         num_layers=2,
+        type_embed_dim=16,
+        latent_mlp_depth=1,
+        latent_mlp_width=16,
+        avg_num_neighbors=4.0,
     )
     result = encoder(molecular_batch)
 
     layer_pool = LayerPooling("mean")
     edge_to_node = EdgeToNodePooling("mean")
 
-    edge_features = layer_pool(result["edges", "edge_features"])
+    # Allegro encoder writes a flat ``(E, F·(L+1))`` DenseNet stack;
+    # reshape to ``(E, L+1, F)`` so LayerPooling reduces over the layer axis.
+    ef = result["edges", "edge_features"]
+    ef = ef.view(ef.shape[0], -1, encoder.num_scalar_features)
+    edge_features = layer_pool(ef)
     node_features = edge_to_node(
         edge_features,
         molecular_batch["edges", "edge_index"],

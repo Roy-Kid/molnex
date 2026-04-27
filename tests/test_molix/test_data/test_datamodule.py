@@ -47,7 +47,10 @@ def _write_and_load_split(tmp_path: Path, train_n: int, val_n: int,
 def _dm_factory(tmp_path):
     def _make(**kwargs) -> DataModule:
         train, val = _write_and_load_split(tmp_path, 8, 2)
+        # Tiny test datasets — pickling/spawning overhead outweighs parallelism.
+        # The user-facing DataModule default is num_workers=4; tests pin 0.
         kwargs.setdefault("pin_memory", False)
+        kwargs.setdefault("num_workers", 0)
         return DataModule(train, val, **kwargs)
     return _make
 
@@ -137,7 +140,7 @@ class TestCollation:
         train, val = _write_and_load_split(tmp_path, 4, 2)
         schema = TargetSchema(graph_level={"U0"}, atom_level=set())
         dm = DataModule(train, val, target_schema=schema, batch_size=2,
-                        pin_memory=False)
+                        num_workers=0, pin_memory=False)
         batch = next(iter(dm.train_dataloader()))
         assert "U0" in batch["graphs"].keys()
 
@@ -245,3 +248,102 @@ class TestEpochHook:
         dm.train_dataloader()
         dm.on_epoch_start(0)
         dm.on_epoch_start(1)
+
+
+# ---------------------------------------------------------------------------
+# from_cached_pipeline factory
+# ---------------------------------------------------------------------------
+
+
+class TestFromCachedPipeline:
+    def test_end_to_end_factory(self, tmp_path):
+        """Factory caches, splits, exposes stats, yields GraphBatch."""
+        from molix.data import InMemorySource, NeighborList, Pipeline
+        from molix.data.types import GraphBatch
+
+        samples = _make_samples(10)
+        source = InMemorySource(samples)
+        pipe = (
+            Pipeline("factory-smoke")
+            .add(NeighborList(cutoff=3.0, max_num_pairs=32, pbc=False))
+            .build()
+        )
+        dm = DataModule.from_cached_pipeline(
+            pipe, source,
+            base_dir=tmp_path,
+            split_sizes=(6, 2, 2),
+            seed=7,
+            batch_size=2,
+            num_workers=0,
+            pin_memory=False,
+        )
+        # Splits wired through
+        assert len(dm.train_dataset) == 6
+        assert len(dm.val_dataset) == 2
+        assert dm.test_dataset is not None and len(dm.test_dataset) == 2
+        assert dm.split_indices is not None and len(dm.split_indices) == 3
+        assert dm.full_dataset is not None and len(dm.full_dataset) == 10
+
+        # Connectivity stats derived from packed-cache pointers — no task needed.
+        assert dm.full_dataset.avg_num_neighbors > 0.0
+        assert dm.full_dataset.max_atoms > 0
+        assert dm.full_dataset.max_edges > 0
+        # Subsets report split-local stats (no peek at val/test).
+        assert dm.train_dataset.avg_num_neighbors > 0.0
+        assert dm.train_dataset.max_atoms <= dm.full_dataset.max_atoms
+
+        # DataLoader produces a GraphBatch
+        batch = next(iter(dm.train_dataloader()))
+        assert isinstance(batch, GraphBatch)
+        assert batch["atoms", "Z"].shape[0] == 4   # 2 mols × 2 atoms
+
+    def test_two_way_split(self, tmp_path):
+        from molix.data import (
+            InMemorySource, NeighborList, Pipeline,
+        )
+
+        samples = _make_samples(8)
+        pipe = (
+            Pipeline("two-way")
+            .add(NeighborList(cutoff=3.0, max_num_pairs=32, pbc=False))
+            .build()
+        )
+        dm = DataModule.from_cached_pipeline(
+            pipe, InMemorySource(samples),
+            base_dir=tmp_path,
+            split_sizes=(5, 3),
+            batch_size=2,
+            num_workers=0,
+            pin_memory=False,
+        )
+        assert len(dm.train_dataset) == 5
+        assert len(dm.val_dataset) == 3
+        assert dm.test_dataset is None
+
+    def test_rejects_oversized_split(self, tmp_path):
+        from molix.data import InMemorySource, NeighborList, Pipeline
+
+        pipe = (
+            Pipeline("over")
+            .add(NeighborList(cutoff=3.0, max_num_pairs=32, pbc=False))
+            .build()
+        )
+        with pytest.raises(ValueError, match="exceeds"):
+            DataModule.from_cached_pipeline(
+                pipe, InMemorySource(_make_samples(5)),
+                base_dir=tmp_path,
+                split_sizes=(4, 3),   # sum=7 > 5
+                pin_memory=False,
+            )
+
+    def test_rejects_single_split(self, tmp_path):
+        from molix.data import InMemorySource, NeighborList, Pipeline
+
+        pipe = Pipeline("one").add(NeighborList(cutoff=3.0, pbc=False)).build()
+        with pytest.raises(ValueError, match=">= 2"):
+            DataModule.from_cached_pipeline(
+                pipe, InMemorySource(_make_samples(5)),
+                base_dir=tmp_path,
+                split_sizes=(5,),
+                pin_memory=False,
+            )
