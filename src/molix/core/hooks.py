@@ -1287,7 +1287,7 @@ _BUILTIN_STATE_PATHS: frozenset = frozenset(
 )
 
 
-def _normalize_key(item) -> Path:
+def _normalize_key(item: Path) -> Path:
     """Coerce a user-provided key into the canonical :data:`Path` form.
 
     A slash-separated string like ``"train/loss"`` is parsed into the
@@ -1304,7 +1304,7 @@ def _normalize_key(item) -> Path:
     raise TypeError(f"Log keys must be str, tuple, or ScalarHook — got {type(item).__name__}")
 
 
-def _collect_keys(items) -> list[Path]:
+def _collect_keys(items: Sequence[Path | ScalarHook]) -> list[Path]:
     """Flatten a mix of paths and :class:`ScalarHook` instances.
 
     Accepts::
@@ -1369,7 +1369,7 @@ class Log(BaseHook):
     def __init__(
         self,
         every_n_steps: int,
-        keys,
+        keys: Sequence[Path | ScalarHook],
         *,
         fmt: str = "{:>12.4g}",
         header_every_n_rows: int = 50,

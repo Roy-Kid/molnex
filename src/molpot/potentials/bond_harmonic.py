@@ -50,12 +50,12 @@ class BondHarmonic(BasePotential):
         self.register_buffer("k", k)
         self.register_buffer("r0", r0)
 
-    def forward(self, data: dict[str, Any] | None = None, **kwargs) -> torch.Tensor:
+    def forward(self, data: dict[str, Any] | None = None, **kwargs: Any) -> torch.Tensor:
         """Compute harmonic bond energy.
 
         Args:
             data: Optional dictionary with molecular fields
-            **kwargs: Alternate way to pass explicit tensors:
+            **kwargs: Alternate way to pass explicit tensors, including:
                 - pos: Positions [N, 3]
                 - bond_index: Bond indices [2, num_bonds]
                 - bond_types: Bond types [num_bonds]

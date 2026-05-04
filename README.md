@@ -157,24 +157,23 @@ MolNex is optimized for:
 
 ## Docs Map
 
-The documentation is organized around responsibilities first, then composition, then APIs.
+The documentation follows a traditional Python project layout: installation,
+package tutorials, user guides, explanations, and generated API reference.
 
 Start here:
 
 - [Documentation home](docs/index.md): navigation map for the docs set
-- [Architecture](docs/architecture.md): how the four-layer stack fits together
-- [Core concepts](docs/concepts.md): the vocabulary used across the framework
-- [Package guide: molix](docs/packages/molix.md)
-- [Package guide: molrep](docs/packages/molrep.md)
-- [Package guide: molpot](docs/packages/molpot.md)
-- [Package guide: molzoo](docs/packages/molzoo.md)
+- [Installation](docs/installation.md)
+- [Molix quick start](docs/molix/tutorials/quick-start.md)
+- [Train a graph model](docs/molix/tutorials/train-a-graph-model.md)
 
-If you want to get running quickly, use:
+Package sections:
 
-- [Installation](docs/get-started/installation.md)
-- [Quick start](docs/get-started/quick-start.md)
-
-If you want package-level implementation docs, continue into the existing package sections under [`docs/molix`](docs/molix/index.md), [`docs/molrep`](docs/molrep/index.md), and [`docs/molpot`](docs/molpot/index.md).
+- [Molix](docs/molix/index.md): training, hooks, data, and execution
+- [MolRep](docs/molrep/index.md): representation learning modules
+- [MolPot](docs/molpot/index.md): potential composition and physical outputs
+- [MolZoo](docs/molzoo/index.md): reference encoder families
+- [API Reference](docs/api/index.md): generated with `mkdocstrings`
 
 ## License
 

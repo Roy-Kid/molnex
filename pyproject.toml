@@ -49,6 +49,10 @@ dev = [
   "ruff>=0.15",
   "ty>=0.0.25",
 ]
+docs = [
+  "zensical>=0.0.27",
+  "mkdocstrings[python]>=0.30",
+]
 bench = ["pytest-benchmark>=4.0"]
 
 [project.urls]

@@ -28,7 +28,7 @@ class BasePotential(nn.Module, ABC):
     name: str = "base"
     type: str = "unknown"
 
-    def calc_energy(self, data=None, **kwargs) -> float:
+    def calc_energy(self, data=None, **kwargs: Any) -> float:
         """Calculate energy (PotentialProtocol method).
 
         This method provides compatibility with molpy's Potential interface.
@@ -37,7 +37,7 @@ class BasePotential(nn.Module, ABC):
         energy_tensor = self.forward(data, **kwargs)
         return float(energy_tensor.item())
 
-    def calc_forces(self, data=None, **kwargs) -> np.ndarray:
+    def calc_forces(self, data=None, **kwargs: Any) -> np.ndarray:
         """Calculate forces via autograd (PotentialProtocol method).
 
         Computes forces as F = -dE/dx using PyTorch autograd.
@@ -64,19 +64,20 @@ class BasePotential(nn.Module, ABC):
         return forces.detach().cpu().numpy()
 
     @abstractmethod
-    def forward(self, data: dict[str, Any] | None = None, **kwargs) -> torch.Tensor:
+    def forward(self, data: dict[str, Any] | None = None, **kwargs: Any) -> torch.Tensor:
         """Forward pass - must be implemented by subclasses.
 
         Args:
             data: Optional dictionary with molecule fields
-            **kwargs: Alternate way to pass explicit tensors (pos, atom_types, etc.)
+            **kwargs: Alternate way to pass explicit tensors such as positions
+                or atom types.
 
         Returns:
             Energy as torch.Tensor (scalar)
         """
         pass
 
-    def _get_positions(self, data=None, **kwargs) -> torch.Tensor:
+    def _get_positions(self, data=None, **kwargs: Any) -> torch.Tensor:
         """Extract positions from data or kwargs."""
         pos = kwargs.get("pos")
         if pos is None and data is not None:

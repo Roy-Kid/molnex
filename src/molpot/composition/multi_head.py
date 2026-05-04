@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import torch
 import torch.nn as nn
 
@@ -23,7 +25,7 @@ class MultiHead(nn.Module):
             raise ValueError("MultiHead requires at least one head.")
         self.heads = nn.ModuleDict(heads)
 
-    def forward(self, node_features: torch.Tensor, **extra) -> dict[str, torch.Tensor]:
+    def forward(self, node_features: torch.Tensor, **extra: Any) -> dict[str, torch.Tensor]:
         """Run all heads and merge outputs.
 
         Args:

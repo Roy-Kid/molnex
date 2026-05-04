@@ -32,7 +32,6 @@ class NeighborList(SampleTask):
             *half*-pair count.  With ``symmetry=True`` the final edge tensor
             holds up to ``2 * max_num_pairs`` rows.
         pbc: Apply periodic boundary conditions.
-        check_errors: Raise if the half-pair count exceeds ``max_num_pairs``.
         filter_padding: Strip NaN-padded rows from the C++ output.
         symmetry: If ``True`` (default), add the reverse edge for every pair so
             the output is a **full bidirectional** neighbour list

@@ -52,12 +52,12 @@ class AngleHarmonic(BasePotential):
         self.register_buffer("k", k)
         self.register_buffer("theta0", theta0)
 
-    def forward(self, data: dict[str, Any] | None = None, **kwargs) -> torch.Tensor:
+    def forward(self, data: dict[str, Any] | None = None, **kwargs: Any) -> torch.Tensor:
         """Compute harmonic angle energy.
 
         Args:
             data: Optional dictionary with molecular fields
-            **kwargs: Alternate way to pass explicit tensors:
+            **kwargs: Alternate way to pass explicit tensors, including:
                 - pos: Positions [N, 3]
                 - angle_index: Angle indices [3, num_angles] (i-j-k triplets)
                 - angle_types: Angle types [num_angles]

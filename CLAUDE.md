@@ -335,9 +335,9 @@ invoked via `/mol:review`.
 
 ## Molzoo spec workflow — one skill, one agent, one file
 
-Each encoder in `src/molzoo/` owns **one** spec artifact at `src/molzoo/specs/<encoder>.md`, following the strict 10-section template embedded in `.claude/skills/molzoo-spec.md` (Scope & Boundary → Paper↔Code Mapping → Reference Alignment → Adaptation Ledger → Mathematical Contract → Config Mapping → Benchmark Contract incl. embedded Run log → System Boundary → Version Pinning → Spec Drift Policy).
+Each encoder in `src/molzoo/` owns **one** spec artifact at `src/molzoo/specs/<encoder>.md`, following the strict 10-section template at `.claude/skills/molzoo-spec/template.md` (Scope & Boundary → Paper↔Code Mapping → Reference Alignment → Adaptation Ledger → Mathematical Contract → Config Mapping → Benchmark Contract incl. embedded Run log → System Boundary → Version Pinning → Spec Drift Policy).
 
-**Spec-first.** §2 / §3.1 / §5 of `<encoder>.md` MUST be filled from the paper + reference impl **before** any encoder code is written. The flow is `scaffold → fill → implement → audit`; reverse workflows ("write code first, retrofit the spec") are the failure mode this whole apparatus exists to prevent. See "Spec-first principle" in `.claude/skills/molzoo-spec.md` for the full rule.
+**Spec-first.** §2 / §3.1 / §5 of `<encoder>.md` MUST be filled from the paper + reference impl **before** any encoder code is written. The flow is `scaffold → fill → implement → audit`; reverse workflows ("write code first, retrofit the spec") are the failure mode this whole apparatus exists to prevent. See "Spec-First Principle" in `.claude/skills/molzoo-spec/SKILL.md` for the full rule.
 
 There is **no** `_experiments.csv` and **no** `_walkthrough.md`. Run logs are §7.4 of `<encoder>.md` (markdown table, append-only). Audit verdicts from `molzoo-auditor` are **printed to the developer at chat time**, not tracked as files; on 📝/🆚 the agent patches `<encoder>.md` directly and that diff is the persistent trace.
 
@@ -345,18 +345,18 @@ One skill + one agent. Both repo-local under `.claude/skills/` and `.claude/agen
 
 | Trigger | Command | Effect |
 |---------|---------|--------|
-| Introduce a new encoder | `/molzoo-spec <encoder> --paper <arxiv_url> [--ref <org>/<repo>@<sha>]` | scaffolds `<encoder>.md` from the 10-section template; header + §9 + Changelog only; status `draft`. Code authoring forbidden. |
-| Translate paper + reference into spec | `/molzoo-spec <encoder> --fill` | populates §2 / §3.1 / §5 from the pinned reference impl + paper; bumps status to `partial`. Required before `<encoder>.py` is written. |
-| Debug or look up a topic | `/molzoo-spec <encoder> <topic>` | read-only; surfaces matching §2 / §4 / §5 sections verbatim; refuses to fabricate; refuses outright if §2/§3/§5 are still placeholders. |
+| Introduce a new encoder | `/molzoo-spec <encoder> --paper <arxiv_url> [--ref <org>/<repo>@<sha>]` | **create mode** (auto-detected when spec is missing): copies the 10-section template to both spec copies; header + §1 + §9 only; status `draft`. Code authoring forbidden. |
+| Fill placeholders or fix drift in an existing spec | `/molzoo-spec <encoder>` | **update mode** (auto-detected when spec exists): fills §2 / §3.1 / §5 from paper + reference, reconciles drift with code, refreshes stale anchors. Bumps status `draft` → `partial` once §2/§3/§5 are filled; required before `<encoder>.py` is written. |
 | After a bench / training run | `/molzoo-spec <encoder> --log <k=v ...>` | appends one row to §7.4; on MAE regression > 10 % or dirty tree, warns + suggests `molzoo-auditor`. |
+| Asking a question about spec content | (no command — answer inline) | The skill's §"Lookup Behavior" hard rule applies: always `Read` the spec first, quote matches verbatim, refuse on a miss and point at `molzoo-auditor`. |
 | Verify code vs spec vs paper | `molzoo-auditor` agent | **prints** ≥ 1 verdict report (✅ ℹ️ ⚠️ 📝 🆚) to the developer; ⚠️ (code-drift) recommends a code change without editing spec; 📝/🆚 patch `<encoder>.md` directly; may backfill the §7.4 `note` cell. |
 
 **Closed-loop contract.** Every operation either updates `<encoder>.md`, prints a verdict, or explicitly delegates — no operation closes silently:
 
-1. `/molzoo-spec --paper` is the only operation that creates `<encoder>.md`, and only for a previously-absent encoder; status starts `draft`.
-2. `/molzoo-spec --fill` MUST be run before any code is written; it bumps status to `partial`. Code authored against status `draft` is a process violation, not just drift (see §10.3 in the spec template).
-3. `/molzoo-spec --log` is append-only on §7.4; it MUST check the previous row and warn (not auto-invoke) on anomalies.
-4. `/molzoo-spec <topic>` MUST refuse on a miss (filled spec) and point at `molzoo-auditor`; MUST refuse outright on a `draft`-status spec and point at `--fill`.
+1. `/molzoo-spec <encoder> --paper <url>` triggers create mode only when the spec file is absent; status starts `draft`.
+2. `/molzoo-spec <encoder>` triggers update mode when the spec exists; it MUST be run before any code is written and bumps status to `partial`. Code authored against status `draft` is a process violation, not just drift (see §10.3 in the spec template).
+3. `/molzoo-spec <encoder> --log <k=v ...>` is append-only on §7.4; it MUST check the previous row and warn (not auto-invoke) on anomalies.
+4. Questions about spec content are answered inline under the skill's §"Lookup Behavior" hard rule — `Read` the spec, quote verbatim, refuse on a miss, refuse outright on a `draft`-status spec and point at update mode.
 5. `molzoo-auditor` MUST print ≥ 1 verdict per invocation (even `✅ confirmed, no drift`), citing the triggering `run_id` or question + paper section + spec row + code file:line. ⚠️ (code-drift) is print-only; 📝/🆚 produce file diffs in `<encoder>.md`. The auditor never edits code — code changes are always the user's call.
 
 The 10-section structure of `<encoder>.md` is **immutable** — adding / removing / renaming a section is a §10.2 breaking change. Invariants are enforced inside the skill, not via `settings.json` hooks, for now.

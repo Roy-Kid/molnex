@@ -199,8 +199,8 @@ class EquivariantPolynomialTP(nn.Module):
             Defaults to ``shared_weights``.
         method: Dispatch method for ``cuet.SegmentedPolynomial``.  If None,
             auto-select based on segment shapes.
-        math_dtype / dtype: Forwarded to ``cuet.SegmentedPolynomial`` and the
-            weight parameter respectively.
+        math_dtype: Forwarded to ``cuet.SegmentedPolynomial``.
+        dtype: Data type for the internal weight parameter.
     """
 
     def __init__(
@@ -262,8 +262,9 @@ class EquivariantPolynomialTP(nn.Module):
                 ``(batch, irreps_input.dim)`` each.
             weight: External weight tensor; required iff
                 ``internal_weights=False``.
-            indices_1 / indices_2 / indices_out: Optional gather/scatter
-                indices for operand 1 / 2 / output.
+            indices_1: Optional gather indices for operand 1.
+            indices_2: Optional gather indices for operand 2.
+            indices_out: Optional scatter indices for the output.
             size_out: Required when ``indices_out`` is set.
 
         Returns:

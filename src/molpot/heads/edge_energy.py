@@ -55,8 +55,8 @@ class EdgeEnergyHead(nn.Module):
             pipeline (e.g. ``molix.data.tasks.AvgNumNeighborsStat``).
         out_key: TensorDict key under which to write the per-graph energy.
 
-    Returns:
-        ``{out_key: (B,)}`` — per-graph total energy tensor.
+    Forward output:
+        ``{out_key: (B,)}`` with the per-graph total energy tensor.
     """
 
     def __init__(

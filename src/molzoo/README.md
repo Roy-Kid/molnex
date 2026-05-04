@@ -21,9 +21,10 @@ One skill + one agent keep `<encoder>.md` aligned with code and paper:
 
 | Trigger | Command | Effect |
 |---------|---------|--------|
-| Introducing a new encoder | `/molzoo-spec <encoder> --paper <arxiv_url>` | seeds `<encoder>.md` from the 10-section template |
-| Debugging a question | `/molzoo-spec <encoder> <topic>` | read-only lookup; refuses to fabricate, suggests `molzoo-auditor` on a miss |
+| Introducing a new encoder | `/molzoo-spec <encoder> --paper <arxiv_url>` | **create mode** (auto-detected when spec is missing): seeds `<encoder>.md` from the 10-section template |
+| Filling placeholders or fixing drift | `/molzoo-spec <encoder>` | **update mode** (auto-detected when spec exists): fills §2/§3/§5 from paper + reference, reconciles drift, refreshes anchors |
 | After a benchmark or training run | `/molzoo-spec <encoder> --log <k=v ...>` | appends one row to §7.4 (Run log) of `<encoder>.md`; warns + suggests `molzoo-auditor` on MAE regression or dirty tree |
+| Asking a question about spec content | (no command — answer inline) | the skill's §"Lookup Behavior" rule applies: always `Read` the spec, quote verbatim, refuse on a miss |
 | Verify code vs paper | `molzoo-auditor` agent | **prints** ≥ 1 verdict report to the developer; on ⚠️/🆚 patches `<encoder>.md` (§2/§3.2/§4/§5) — the spec diff is the persistent trace |
 
 **The loop never closes silently.** Every operation either updates the spec, prints a verdict, or explicitly delegates. See `CLAUDE.md` for the full contract.

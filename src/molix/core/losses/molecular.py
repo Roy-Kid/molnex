@@ -81,8 +81,10 @@ def energy_force_mse(
     ``(N_total, 3)``).
 
     Args:
-        energy_target_key / force_target_key: GraphBatch keys.
-        energy_pred_key / force_pred_key: keys on the model-forward output dict.
+        energy_target_key: Graph-level energy target key in the batch.
+        force_target_key: Atom-level force target key in the batch.
+        energy_pred_key: Energy key on the model-forward output dict.
+        force_pred_key: Force key on the model-forward output dict.
         lambda_F: Weight on the force-MSE term.
         reduction: Forwarded to both :class:`torch.nn.MSELoss` instances.
 

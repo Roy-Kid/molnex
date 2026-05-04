@@ -52,12 +52,12 @@ class DihedralHarmonic(BasePotential):
         self.register_buffer("k", k)
         self.register_buffer("phi0", phi0)
 
-    def forward(self, data: dict[str, Any] | None = None, **kwargs) -> torch.Tensor:
+    def forward(self, data: dict[str, Any] | None = None, **kwargs: Any) -> torch.Tensor:
         """Compute harmonic dihedral energy.
 
         Args:
             data: Optional dictionary with molecular fields
-            **kwargs: Alternate way to pass explicit tensors:
+            **kwargs: Alternate way to pass explicit tensors, including:
                 - pos: Positions [N, 3]
                 - dihedral_index: Dihedral indices [4, num_dihedrals] (i-j-k-l)
                 - dihedral_types: Dihedral types [num_dihedrals]

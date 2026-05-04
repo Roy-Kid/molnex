@@ -297,8 +297,10 @@ class PermMultipoleHead(nn.Module):
         coulomb_constant: Numerical Coulomb constant in your unit system.
             Defaults to ``14.399645`` eV·Å·e⁻², matching the
             AtomicDress→eV convention used by ``examples/train_qm9_multipole.py``.
-        out_energy_key / out_charge_key / out_dipole_key /
-        out_quadrupole_key: TensorDict keys to write back into the batch.
+        out_energy_key: TensorDict key for the electrostatic energy.
+        out_charge_key: TensorDict key for atomic charges.
+        out_dipole_key: TensorDict key for atomic dipoles.
+        out_quadrupole_key: TensorDict key for atomic quadrupoles.
         tensor_irreps: Wiring (not in spec): irreps of the encoder's
             tensor-track output. Required when ``dipole=True`` (l=1
             readout) or ``quadrupole=True`` (l=2 readout). Pass
@@ -306,12 +308,11 @@ class PermMultipoleHead(nn.Module):
             with ``expose_tensor_track=True``, and ``l_max ≥ 2`` if
             quadrupole is on).
 
-    Returns:
-        Dict with the same keys as the per-atom / per-graph writes plus
-        ``"molecular_dipole"`` (always present when charges are predicted)
-        and, when total-charge projection is on, the diagnostic
-        ``"charge_sum_pre_proj"`` and ``"charge_sum_post_proj"`` per-graph
-        sums for monitoring.
+    Forward output:
+        Dict with the same keys as the per-atom and per-graph writes plus
+        ``"molecular_dipole"`` when charges are predicted. When total-charge
+        projection is on, the output also contains ``"charge_sum_pre_proj"``
+        and ``"charge_sum_post_proj"`` per-graph sums for monitoring.
     """
 
     def __init__(
