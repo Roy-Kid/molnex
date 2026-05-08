@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import torch
 
-from molix.core.hooks import MetricsHook
+from molix.hooks import MetricsHook
 from molix.core.metrics import MAE, RMSE
 from molix.core.state import TrainState, display, resolve
 

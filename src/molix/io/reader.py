@@ -1,15 +1,15 @@
-"""Read-side counterpart to :mod:`molix.recorder.zarr_store`.
+"""Read-side counterpart to :class:`molix.io.writer.JournalWriter`.
 
 The reader treats the on-disk Zarr group as the authoritative record
-stream, per molrec spec §Index ("readers must not treat an index as
-authoritative if the underlying metric records are available"). The
-optional ``metrics/index`` subgroup is consulted for fast key
-enumeration when present, but the reader transparently rebuilds the
-key index from the parallel ``key`` array if the subgroup is absent.
+stream; the optional ``metrics/index`` subgroup is consulted for
+fast key enumeration when present, but the reader transparently
+rebuilds the key index from the parallel ``key`` array if the
+subgroup is absent.
 
-References:
-    molrec spec §Structure / §Index
-    /Users/roykid/work/molcrafts/molrec/docs/spec/metrics.md
+Records are yielded as plain ``dict`` instances — the schema
+dataclass that the legacy ``recorder`` package used was YAGNI'd
+during the io-hooks-refactor. Downstream callers index into the
+dict directly: ``record["type"]``, ``record["value"]``, etc.
 """
 
 from __future__ import annotations
@@ -22,15 +22,13 @@ from typing import Any
 
 import numpy as np
 
-from molix.recorder.schema import MetricRecord
 
-
-class MetricsReader:
-    """Read-side facade over a Zarr v3 metric store.
+class JournalReader:
+    """Read-side facade over a Zarr v3 training-event journal.
 
     Args:
-        path: Root directory of the Zarr store (matches the writer's
-            ``path`` argument).
+        path: Root directory of the Zarr store (matches the
+            writer's ``path`` argument).
         run_id: Per-run identifier (matches the writer's ``run_id``).
     """
 
@@ -48,11 +46,7 @@ class MetricsReader:
         return int(self._grp["type"].shape[0])
 
     def keys(self) -> list[str]:
-        """Distinct stable keys in append order of first appearance.
-
-        Prefers the derived ``metrics/index`` subgroup when present,
-        otherwise reconstitutes from the ``key`` array directly.
-        """
+        """Distinct stable keys in append order of first appearance."""
         try:
             index_grp = self._grp["index"]
             cached = index_grp.attrs.get("series_keys")
@@ -89,13 +83,13 @@ class MetricsReader:
         values = np.asarray(self._grp["value_scalar"][:])[mask]
         return steps, values
 
-    def records(self) -> Iterator[MetricRecord]:
-        """Iterate every record in append order.
+    def records(self) -> Iterator[dict[str, Any]]:
+        """Iterate every record in append order, yielded as a plain ``dict``.
 
-        The five molrec metric types are reconstituted by routing
-        ``value`` through the per-type sparse arrays. Histograms,
-        image_refs, and JSON values are JSON-decoded back to their
-        original Python shape.
+        Yields:
+            Dicts with keys ``type``, ``key``, ``step`` (``None`` if
+            the original was missing), ``wall_time_ns``, ``value``
+            (decoded per ``type``), and ``tags``.
         """
         type_arr = self._grp["type"][:]
         key_arr = self._grp["key"][:]
@@ -128,13 +122,13 @@ class MetricsReader:
                 case "json":
                     value = json.loads(str(json_arr[i]))
                 case other:
-                    raise ValueError(f"Unknown metric type {other!r} at row {i}")
+                    raise ValueError(f"Unknown record type {other!r} at row {i}")
 
-            yield MetricRecord(
-                type=t,
-                key=str(key_arr[i]),
-                step=None if step_i == -1 else step_i,
-                wall_time_ns=int(wall_arr[i]),
-                value=value,
-                tags=tags,
-            )
+            yield {
+                "type": t,
+                "key": str(key_arr[i]),
+                "step": None if step_i == -1 else step_i,
+                "wall_time_ns": int(wall_arr[i]),
+                "value": value,
+                "tags": tags,
+            }

@@ -6,7 +6,7 @@ Users can use built-in metrics or torchmetrics metrics interchangeably.
 Example:
     ```python
     from molix.core.metrics import MAE, RMSE
-    from molix.core.hooks import MetricsHook
+    from molix.hooks.scalar import MetricsHook
 
     # Use built-in metrics
     hook = MetricsHook(metrics=[MAE(), RMSE()])

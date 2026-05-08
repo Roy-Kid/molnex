@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 import torch
 
-from molix.core.hooks import (
+from molix.core.hook import ScalarHook
+from molix.hooks import (
     GPUMemoryHook,
     Log,
-    ScalarHook,
     StepSpeedHook,
 )
 from molix.core.state import TrainState
@@ -307,7 +307,7 @@ def test_step_speed_hook_is_scalar_hook():
 
 def test_metrics_hook_scalar_keys_are_dynamic():
     # MetricsHook.scalar_keys is a @property; values depend on metrics list.
-    from molix.core.hooks import MetricsHook
+    from molix.hooks import MetricsHook
 
     class _FakeMetric:
         def reset(self):

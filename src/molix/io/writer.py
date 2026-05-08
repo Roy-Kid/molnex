@@ -1,32 +1,24 @@
-"""Zarr v3 backend implementing the molrec metric record schema.
+"""Sharded Zarr v3 writer for the MolNex training-event journal.
 
-This module is the **write side** of the metric recorder. The on-disk
-layout follows molrec spec §Structure
-(``/Users/roykid/work/molcrafts/molrec/docs/spec/metrics.md``):
+The on-disk layout matches the original ``recorder/zarr_store.py``
+verbatim — only the Python API has been simplified:
 
-* ``metrics/records/<run_id>/`` is a Zarr v3 group with parallel 1-D
-  arrays for ``type``, ``key``, ``step``, ``wall_time_ns``, ``tags``,
-  and one ``value_<kind>`` array per molrec metric type.
-* ``step`` carries ``-1`` as the missing-value sentinel (the spec
-  permits ``step`` to be optional; we don't admit float-NaN on an
-  ``int64`` array).
-* ``wall_time_ns`` is ``int64`` epoch nanoseconds; the group
-  attribute ``wall_time_unit = "epoch_ns"`` declares this deliberate
-  deviation from the spec's ISO-8601 string encoding.
-* Sharding (``chunks=(1024,)``, ``shards=(1_048_576,)``) collapses up
-  to a million rows into a single physical file per parallel array,
-  defending against the inode-explosion failure mode that motivated
-  :class:`~molix.data.cache.PackedCache` over
-  ``TensorDict.memmap_()``.
+* The writer accepts kwargs (``type=``, ``key=``, ``step=``,
+  ``wall_time_ns=``, ``value=``, ``tags=``) instead of a
+  ``MetricRecord`` dataclass — there is one producer
+  (:class:`molix.hooks.journal.JournalHook`) and we YAGNI'd the
+  schema layer.
+* Five reserved ``type`` strings (preserved verbatim from the
+  legacy ``RESERVED_METRIC_TYPES`` tuple) dispatch to per-type
+  parallel arrays inside :meth:`JournalWriter.append` via a
+  ``match`` block; unknown types raise :class:`ValueError`.
 
-Records are append-only; the :class:`ZarrMetricStore` API exposes
-``append`` / ``flush`` / ``close`` exclusively, never ``update`` or
-``delete`` (molrec spec §Metric records: "writers should not mutate
-historical records").
-
-References:
-    molrec spec §Structure / §Metric records / §Metric types
-    /Users/roykid/work/molcrafts/molrec/docs/spec/metrics.md
+The chunk + shard sizes (``chunks=(1024,)``, ``shards=(1_048_576,)``)
+are deliberate: they collapse up to a million rows into a single
+physical file per parallel array, matching the inode-discipline
+posture of :class:`molix.data.cache.PackedCache` and defending
+against the per-record-subdirectory failure mode of
+``TensorDict.memmap_``.
 """
 
 from __future__ import annotations
@@ -36,7 +28,13 @@ import os
 from pathlib import Path
 from typing import Any, Final
 
-from molix.recorder.schema import MetricRecord
+_RESERVED_TYPES: Final[tuple[str, ...]] = (
+    "scalar",
+    "histogram",
+    "text",
+    "image_ref",
+    "json",
+)
 
 _SPEC_VERSION: Final[str] = "molrec-metrics/0.1"
 
@@ -49,10 +47,10 @@ _VALUE_ARRAY_NAMES: Final[tuple[str, ...]] = (
 )
 
 
-class ZarrMetricStore:
-    """Append-only Zarr v3 backend for molrec metric records.
+class JournalWriter:
+    """Append-only Zarr v3 writer for training-event records.
 
-    The store materialises one Zarr group per ``run_id`` under
+    The writer materialises one Zarr group per ``run_id`` under
     ``<path>/metrics/records/<run_id>/``. Multiple runs may share a
     parent ``<path>``; each run is independent.
 
@@ -65,8 +63,9 @@ class ZarrMetricStore:
             overhead.
         shard_rows: Rows per shard file (default 1,048,576). The
             shard rolls multiple chunks into one physical file —
-            this is what keeps the file count O(num_runs * num_arrays)
-            rather than O(num_records / chunk_rows).
+            this is what keeps the file count
+            ``O(num_runs * num_arrays)`` rather than
+            ``O(num_records / chunk_rows)``.
         spec_version: Recorded into ``attrs["spec_version"]`` so a
             future reader can detect format drift.
     """
@@ -141,56 +140,78 @@ class ZarrMetricStore:
                 )
         return out
 
-    def append(self, record: MetricRecord) -> None:
+    def append(
+        self,
+        *,
+        type: str,
+        key: str,
+        step: int | None,
+        wall_time_ns: int,
+        value: Any,
+        tags: dict[str, Any] | None = None,
+    ) -> None:
         """Buffer one record; values written on the next :meth:`flush` / :meth:`close`.
 
-        Buffering is per-store (not per-array) so the 10 parallel arrays
-        always grow in lock-step and never desynchronise on a partial
-        write. A SIGKILL between :meth:`append` and :meth:`flush` loses
-        the buffered tail but never corrupts the on-disk record stream.
+        Args:
+            type: One of ``"scalar"``, ``"histogram"``, ``"text"``,
+                ``"image_ref"``, ``"json"``.
+            key: Stable slash-separated namespaced name, e.g.
+                ``"train/loss"``. Must be non-empty.
+            step: Optional global step. ``None`` is encoded as ``-1``
+                in the on-disk array (the ``step`` array is ``int64``
+                so float-NaN is unavailable).
+            wall_time_ns: Wall-clock timestamp in epoch nanoseconds.
+            value: Payload whose Python type must match ``type``'s
+                contract — ``float`` for scalar, ``{"bins":..., "counts":...}``
+                for histogram, ``str`` for text, ``{"path":..., "caption":...}``
+                for image_ref, JSON-serialisable value for json.
+            tags: Optional JSON-compatible mapping of free-form
+                annotations.
+
+        Raises:
+            ValueError: If ``key`` is empty or ``type`` is not one of
+                the five reserved strings.
+            RuntimeError: If called after :meth:`close`.
         """
         if self._closed:
-            raise RuntimeError("ZarrMetricStore.append called after close()")
-        if not record.key:
-            raise ValueError("MetricRecord.key must be a non-empty string")
+            raise RuntimeError("JournalWriter.append called after close()")
+        if not key:
+            raise ValueError("key must be a non-empty string")
 
-        self._buffer["type"].append(record.type)
-        self._buffer["key"].append(record.key)
-        self._buffer["step"].append(-1 if record.step is None else int(record.step))
-        self._buffer["wall_time_ns"].append(int(record.wall_time_ns))
-        self._buffer["tags"].append(
-            "" if record.tags is None else json.dumps(record.tags, sort_keys=True)
-        )
+        self._buffer["type"].append(type)
+        self._buffer["key"].append(key)
+        self._buffer["step"].append(-1 if step is None else int(step))
+        self._buffer["wall_time_ns"].append(int(wall_time_ns))
+        self._buffer["tags"].append("" if tags is None else json.dumps(tags, sort_keys=True))
 
         for name in _VALUE_ARRAY_NAMES:
             self._buffer[name].append(self._arrays[name].fill_value)
 
-        match record.type:
+        match type:
             case "scalar":
-                self._buffer["value_scalar"][-1] = float(record.value)
+                self._buffer["value_scalar"][-1] = float(value)
             case "histogram":
                 self._buffer["value_histogram"][-1] = json.dumps(
                     {
-                        "bins": list(record.value["bins"]),
-                        "counts": list(record.value["counts"]),
+                        "bins": list(value["bins"]),
+                        "counts": list(value["counts"]),
                     }
                 )
             case "text":
-                self._buffer["value_text"][-1] = str(record.value)
+                self._buffer["value_text"][-1] = str(value)
             case "image_ref":
-                self._buffer["value_image_ref"][-1] = json.dumps(record.value)
+                self._buffer["value_image_ref"][-1] = json.dumps(value)
             case "json":
-                self._buffer["value_json"][-1] = json.dumps(record.value)
+                self._buffer["value_json"][-1] = json.dumps(value)
             case other:
                 raise ValueError(
-                    f"Unknown metric type {other!r}; expected one of "
-                    f"{('scalar', 'histogram', 'text', 'image_ref', 'json')!r}"
+                    f"Unknown record type {other!r}; expected one of {_RESERVED_TYPES!r}"
                 )
 
     def flush(self) -> None:
         """Drain the in-memory buffer into the Zarr arrays."""
         if self._closed:
-            raise RuntimeError("ZarrMetricStore.flush called after close()")
+            raise RuntimeError("JournalWriter.flush called after close()")
         n = len(self._buffer["type"])
         if n == 0:
             return
@@ -204,12 +225,7 @@ class ZarrMetricStore:
         self._n_rows = new_total
 
     def close(self) -> None:
-        """Flush, write the derived index, and mark the store closed.
-
-        The index is advisory per molrec spec §Index — readers should
-        prefer reconstituting from records when both are available, so
-        the writer treats it as a convenience side-output.
-        """
+        """Flush, write the derived index, and mark the writer closed."""
         if self._closed:
             return
         self.flush()
@@ -221,7 +237,7 @@ class ZarrMetricStore:
         if self._n_rows > 0:
             keys = list(keys_arr[:])
             types = list(types_arr[:])
-            seen = {}
+            seen: dict[str, str] = {}
             for k, t in zip(keys, types, strict=True):
                 seen.setdefault(k, t)
             index_grp.attrs["series_count"] = len(seen)
@@ -234,7 +250,7 @@ class ZarrMetricStore:
 
         self._closed = True
 
-    def __enter__(self) -> "ZarrMetricStore":
+    def __enter__(self) -> "JournalWriter":
         return self
 
     def __exit__(self, *exc_info: Any) -> None:

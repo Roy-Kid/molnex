@@ -16,7 +16,7 @@ from molix.core.checkpoint import (
     capture_rng_states,
     restore_rng_states,
 )
-from molix.core.hooks import CheckpointHook
+from molix.hooks import CheckpointHook
 from molix.core.state import TrainState
 from molix.core.trainer import Trainer
 
@@ -481,7 +481,7 @@ class TestCheckpointHookIntegration:
 
     def test_announces_through_log_hook_when_present(self, tmp_path, capsys):
         """P4: CheckpointHook inlines the save event via Log.announce."""
-        from molix.core.hooks import Log
+        from molix.hooks import Log
 
         ckpt_dir = str(tmp_path / "ckpts")
         log_hook = Log(every_n_steps=1, keys=[("train", "loss")])
@@ -502,7 +502,7 @@ class TestCheckpointHookIntegration:
     def test_epoch_end_plus_train_end_dedup_last_pt(self, tmp_path, capsys):
         """``on_epoch_end`` + ``on_train_end`` landing on the same step
         must not write ``last.pt`` twice (nor announce twice)."""
-        from molix.core.hooks import Log
+        from molix.hooks import Log
 
         ckpt_dir = str(tmp_path / "ckpts")
         log_hook = Log(every_n_steps=1, keys=[("train", "loss")])

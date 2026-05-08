@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 from molix.config import set_precision
-from molix.core.hooks import (
+from molix.hooks import (
     ActivationCheckpointingHook,
     GradClipHook,
 )

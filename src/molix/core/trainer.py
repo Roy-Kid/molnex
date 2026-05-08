@@ -15,7 +15,7 @@ from molix import logger as _logger_mod
 from molix.config import config
 from molix.config import set_precision as _set_precision_global
 from molix.core.checkpoint import Checkpoint, CheckpointBackend, TorchSaveBackend
-from molix.core.hooks import Hook
+from molix.core.hook import Hook
 from molix.core.state import Stage, TrainState, resolve
 from molix.core.steps import DefaultEvalStep, DefaultTrainStep, Step, batch_to_device
 from molix.data.datamodule import DataModuleProtocol
@@ -292,7 +292,7 @@ class Trainer:
 
         # AMP without grad clip → occasional outlier-gradient metric spikes.
         if config["use_amp"]:
-            from molix.core.hooks import GradClipHook as _GradClipHook
+            from molix.hooks.training import GradClipHook as _GradClipHook
 
             if not any(isinstance(h, _GradClipHook) for h in self.hooks):
                 logger.warning(

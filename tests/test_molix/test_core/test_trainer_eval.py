@@ -4,7 +4,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from molix.core.hooks import BaseHook
+from molix.core.hook import BaseHook
 from molix.core.state import TrainState
 from molix.core.trainer import Trainer
 
