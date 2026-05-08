@@ -39,6 +39,8 @@ dependencies = [
   "pydantic",
   "tqdm",
   "nvidia-ml-py",
+  "zarr>=3.0",
+  "numcodecs>=0.13",
 ]
 
 [project.optional-dependencies]

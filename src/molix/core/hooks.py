@@ -21,6 +21,7 @@ from molix.core.state import Path, display, resolve
 if TYPE_CHECKING:
     from molix.core.state import TrainState
     from molix.core.trainer import Trainer
+    from molix.recorder.schema import MetricStore
 
 logger = _logger_mod.getLogger(__name__)
 
@@ -368,6 +369,187 @@ class TensorBoardHook(BaseHook):
         return final_metrics
 
 
+class Journal(BaseHook):
+    """Append-only persistence sink for the molrec metric record stream.
+
+    Mirrors the same :class:`~molix.core.state.TrainState` namespaces as
+    :class:`TensorBoardHook` (``train/``, ``performance/``, ``gpu/`` on
+    the train phase; ``eval/`` on the eval phase) but writes records to
+    a :class:`~molix.recorder.schema.MetricStore` backend instead of
+    TensorBoard event files. The default backend
+    :class:`~molix.recorder.zarr_store.ZarrMetricStore` materialises a
+    Zarr v3 group per ``run_id`` following molrec spec §Structure.
+
+    Naming: this class drops the ``Hook`` suffix per the new instrument-
+    noun convention (canonical example: :class:`ProgressBarHook` →
+    ``ProgressBar``). A ``Journal`` is the artifact this hook
+    maintains — an append-only record book of metric observations,
+    matching molrec spec §Metric records' "writers should not mutate
+    historical records" rule.
+
+    Args:
+        every_n_steps: Mirror frequency for ``train``/``performance``/
+            ``gpu`` namespace scalars during the train phase. Must be
+            positive.
+        store: Backend implementing :class:`MetricStore`. The hook
+            calls ``store.append`` per row and ``store.close`` at end
+            of training; the store is otherwise opaque.
+        log_hparams: When ``True`` and ``hparams`` is provided, emit
+            one ``type="json", key="hparams", step=0`` record at
+            ``on_train_start``.
+        log_histograms: When ``True``, emit ``type="histogram"``
+            records for ``Weights/<name>`` and ``Gradients/<name>`` on
+            every ``histogram_freq``-th epoch end. Bins are computed
+            via :func:`numpy.histogram` (per-record).
+        hparams: Hyperparameter mapping; required when
+            ``log_hparams=True``.
+        histogram_freq: Histogram emission cadence in epochs. Default 1.
+        histogram_bins: Number of histogram bins. Default 64.
+    """
+
+    TRAIN_NAMESPACES: tuple[str, ...] = ("train", "performance", "gpu")
+    EVAL_NAMESPACES: tuple[str, ...] = ("eval",)
+
+    def __init__(
+        self,
+        every_n_steps: int,
+        store: "MetricStore",
+        *,
+        log_hparams: bool = False,
+        log_histograms: bool = False,
+        hparams: dict[str, Any] | None = None,
+        histogram_freq: int = 1,
+        histogram_bins: int = 64,
+    ) -> None:
+        if every_n_steps <= 0:
+            raise ValueError(f"every_n_steps must be positive, got {every_n_steps}")
+        if histogram_freq <= 0:
+            raise ValueError(f"histogram_freq must be positive, got {histogram_freq}")
+
+        self._store = store
+        self._every_n_steps = every_n_steps
+        self._log_hparams = log_hparams
+        self._log_histograms = log_histograms
+        self._hparams = hparams or {}
+        self._histogram_freq = histogram_freq
+        self._histogram_bins = histogram_bins
+
+    @staticmethod
+    def _now_ns() -> int:
+        import time
+
+        return time.time_ns()
+
+    def on_train_start(self, trainer: "Trainer | None", state: "TrainState") -> None:
+        """Emit the ``hparams`` JSON record if enabled."""
+        if self._log_hparams and self._hparams:
+            from molix.recorder.schema import MetricRecord
+
+            self._store.append(
+                MetricRecord(
+                    type="json",
+                    key="hparams",
+                    step=0,
+                    wall_time_ns=self._now_ns(),
+                    value=dict(self._hparams),
+                    tags=None,
+                )
+            )
+
+    def on_train_batch_end(
+        self,
+        trainer: "Trainer | None",
+        state: "TrainState",
+        batch: Any,
+        outputs: Any,
+    ) -> None:
+        """Mirror ``train/`` ``performance/`` ``gpu/`` scalars at the configured cadence."""
+        global_step = int(state.get("global_step", 0))
+        if global_step % self._every_n_steps != 0:
+            return
+        self._mirror_namespaces(state, self.TRAIN_NAMESPACES, global_step)
+
+    def on_eval_step_complete(self, trainer: "Trainer | None", state: "TrainState") -> None:
+        """Mirror ``eval/`` scalars whenever an eval phase completes."""
+        global_step = int(state.get("global_step", 0))
+        self._mirror_namespaces(state, self.EVAL_NAMESPACES, global_step)
+
+    def on_epoch_end(self, trainer: "Trainer | None", state: "TrainState") -> None:
+        """Emit weight / gradient histogram records when enabled."""
+        if not self._log_histograms or trainer is None:
+            return
+        epoch = int(state.get("epoch", 0))
+        if (epoch + 1) % self._histogram_freq != 0:
+            return
+        self._emit_histograms(trainer, state)
+
+    def on_train_end(self, trainer: "Trainer | None", state: "TrainState") -> None:
+        """Close the underlying store."""
+        self._store.close()
+
+    def _mirror_namespaces(
+        self, state: "TrainState", namespaces: tuple[str, ...], global_step: int
+    ) -> None:
+        from molix.recorder.schema import MetricRecord
+
+        wall = self._now_ns()
+        for ns in namespaces:
+            sub = state[ns]
+            if not isinstance(sub, dict):
+                continue
+            for k, value in sub.items():
+                scalar = _as_scalar(value)
+                if scalar is None:
+                    continue
+                self._store.append(
+                    MetricRecord(
+                        type="scalar",
+                        key=f"{ns}/{k}",
+                        step=global_step,
+                        wall_time_ns=wall,
+                        value=float(scalar),
+                        tags=None,
+                    )
+                )
+
+    def _emit_histograms(self, trainer: "Trainer", state: "TrainState") -> None:
+        import numpy as np
+
+        from molix.recorder.schema import MetricRecord
+
+        epoch = int(state.get("epoch", 0))
+        wall = self._now_ns()
+        model = getattr(trainer, "model", None)
+        if model is None:
+            return
+        for name, param in model.named_parameters():
+            data = param.detach().cpu().numpy().ravel()
+            counts, bins = np.histogram(data, bins=self._histogram_bins)
+            self._store.append(
+                MetricRecord(
+                    type="histogram",
+                    key=f"Weights/{name}",
+                    step=epoch,
+                    wall_time_ns=wall,
+                    value={"bins": bins.tolist(), "counts": counts.tolist()},
+                    tags=None,
+                )
+            )
+            if param.grad is not None:
+                gdata = param.grad.detach().cpu().numpy().ravel()
+                gcounts, gbins = np.histogram(gdata, bins=self._histogram_bins)
+                self._store.append(
+                    MetricRecord(
+                        type="histogram",
+                        key=f"Gradients/{name}",
+                        step=epoch,
+                        wall_time_ns=wall,
+                        value={"bins": gbins.tolist(), "counts": gcounts.tolist()},
+                        tags=None,
+                    )
+                )
+
+
 class CheckpointHook(BaseHook):
     """Saves model checkpoints during training.
 
@@ -646,7 +828,14 @@ class MetricsHook(ScalarHook):
       once in ``on_eval_step_complete``.
 
     Args:
-        metrics: Metric instances (torchmetrics-compatible). Deep-copied.
+        metrics: Metric instances satisfying the
+            :class:`~molix.core.metrics.Metric` Protocol
+            (``update`` / ``compute`` / ``reset``). MolNex's own
+            metrics in :mod:`molix.core.metrics` (``MAE``, ``RMSE``,
+            ``MSE``, ``R2Score``, ``Accuracy``) all comply; the
+            Protocol is shape-compatible with ``torchmetrics`` but
+            ``torchmetrics`` is **not** a hard dependency. Deep-copied
+            so train and val accumulators never share buffers.
         pred_key: Dotted path or tuple to extract predictions from outputs.
         target_key: Dotted path or tuple to extract targets from batch.
         prefix_train: State namespace for train metrics (default ``"train"``).
