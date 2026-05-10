@@ -8,6 +8,7 @@
 | Entry point | `PermMultipoleHead` (config `PermMultipoleHeadSpec`) |
 | Status | draft |
 | Owning agent | `mn-impl` |
+| Revised | 2026-05-08 (energy kernels stripped — see `les-electrostatics`) |
 | Reference (μ readout) | Schütt, Unke, Gastegger, *PaiNN: Equivariant Message Passing for the Prediction of Tensorial Properties and Molecular Spectra*, ICML 2021 — https://arxiv.org/abs/2102.03150 |
 | Reference (encoder) | Musaelian et al., *Allegro*, *Nat. Commun.* **14**, 579 (2023) |
 | Out-of-scope reference | Fuchs/Sanocki/Zavadlav, *CELLI*, npj Comput. Mater. **11**, 71 (2025) — https://doi.org/10.1038/s41524-025-01790-4 (Qeq + KKT solve + Hirshfeld supervision; **not** what this layer implements; will live in a separate `QEqLayer`) |
@@ -18,10 +19,12 @@ Allegro emits scalar `("edges", "edge_features")` and `EdgeEnergyHead` aggregate
 those into a per-graph energy. That gives a serviceable potential but no
 physical access to the underlying charge density: we can't predict atomic
 moments, can't supervise on electrostatic potential / molecular dipole, and
-can't compose with classical multipole-multipole interaction kernels.
+can't compose with downstream electrostatic energy operators.
 
 The `PermMultipoleHead` is a **PaiNN-style direct multipole readout** over the
-Allegro encoder:
+Allegro encoder. Per the `les-electrostatics` spec (2026-05-08), this head
+is now a **pure readout** — energy aggregation has moved to
+`molpot.potentials.EwaldMultipoleEnergy`:
 
 * charges ``q_i`` come from a per-atom scalar head on Allegro's pooled scalar
   features, with a hard mean-residual projection onto ``Σ_i q_i = Q_tot``;
@@ -34,49 +37,40 @@ Allegro encoder:
 * the molecular dipole ``μ_mol = Σ_i q_i r_i + Σ_i μ_i`` (PaiNN's
   ``DipoleMoment`` head) is emitted automatically and can be supervised
   against QM9's `mu` magnitude;
-* electrostatic energy enters the total potential through ``½ Σ k_C q_i q_j /
-  r_{ij}`` (and, in v1, higher tensor terms from Stone §3);
-* downstream MM force fields can consume the predicted ``(q, μ, Θ)`` directly
-  as transferable atomic parameters.
+* downstream consumers — :class:`molpot.potentials.EwaldMultipoleEnergy`
+  for screened-Coulomb / Ewald multipole electrostatics, classical MM
+  force fields for transferable parameters, etc. — read ``(q, μ, Θ)``
+  out of the batch and emit energy themselves.
 
-This layer is **direct** in the same sense as PaiNN: heads → moments → energy.
-The Qeq variational route (CELLI, Fuchs et al. 2025) — solving a per-atom KKT
+This layer is **direct** in the same sense as PaiNN: heads → moments. The
+Qeq variational route (CELLI, Fuchs et al. 2025) — solving a per-atom KKT
 system under ``1ᵀQ = Q_tot`` and supervising against per-atom Hirshfeld
 charges — is a different physical model and a different supervision regime;
 it is explicitly out of scope here and will live in a separate future
-`QEqLayer`. Polarizable response (induced dipoles, self-consistent Thole
-damping) and periodic Ewald / PME are likewise separate concerns.
+`QEqLayer`.
 
 ## Non-goals
 
 * **Charge equilibration (Qeq / CELLI).** See header table & §Reference for
   the full statement; the short version is "different code path, future
   `QEqLayer`."
-* **Polarizable response.** Permanent + induced dipoles need a self-consistent
-  loop; goes in a future `PolarizableMultipoleHead`. The reserved
-  `damping="thole"` value belongs there.
-* **Periodic Ewald / PME long-range backends.** This layer reuses the
-  encoder's neighbour list. Periodic systems get a future
-  `PeriodicMultipoleEnergy` wrapper.
-* **Higher-order interaction kernels.** Three of the six pair terms
-  through `l = 2` are implemented: `qq`, `qm`, `mm` (Stone, *Theory of
-  Intermolecular Forces*, 2nd ed., 2013, §3.3 / Eq. 3.3.5):
-
-  * `qq` — `q_a q_b / r`
-  * `qm` — `[q_b (R̂·μ_a) − q_a (R̂·μ_b)] / r²`
-  * `mm` — `[μ_a·μ_b − 3 (μ_a·R̂)(μ_b·R̂)] / r³`
-
-  The remaining three (`qt`, `mt`, `tt`) require a Cartesian /
-  spherical-tensor multiplication on `Θ` and are recognised keywords
-  that raise `NotImplementedError` at construction time so user configs
-  can declare intent today and trip a clear boundary.
-
-  Each term is gated by `_TERM_REQUIREMENTS` — `qm` requires both
-  `charge=True` AND `dipole=True`, `mm` requires `dipole=True`, etc.
-  Numerical-validation tests in
-  `tests/test_molpot/test_heads/test_multipole_energy_kernels.py` check
-  the kernels against hand-derived 2-atom values + composed-pipeline
-  translation/rotation invariance.
+* **Energy aggregation.** All electrostatic energy now lives in
+  :class:`molpot.potentials.EwaldMultipoleEnergy` (see the
+  `les-electrostatics` spec, 2026-05-08). The qq / qm / mm pair-energy
+  kernels that this head used to carry have been stripped along with
+  the `energy_terms`, `damping`, `damping_alpha`, `cutoff`,
+  `coulomb_constant`, and `out_energy_key` constructor parameters.
+  `EwaldMultipoleEnergy` is the single source of truth for both
+  non-periodic O(N²) realspace summation and 3D-periodic σ-screened
+  Ewald summation, and it consumes the moments this head writes into
+  the batch.
+* **Polarizable response — split between two providers.**
+  Self-consistent Thole-damped CG induction lives in
+  :class:`molpot.potentials.Polarization`; non-self-consistent linear
+  response (LES α-mode) is inlined inside
+  :class:`EwaldMultipoleEnergy`. They are different physical
+  approximations and must not be co-instantiated in one
+  `PotentialComposer`.
 * **Equivariant `Θ` head — implemented.** Quadrupole prediction is the exact
   `l=2` analogue of the inlined `μ` readout: slice the `2e` block of the
   encoder's tensor track, scalar-gate per-channel, and collapse `u·2e → 1·2e`
@@ -94,6 +88,11 @@ damping) and periodic Ewald / PME are likewise separate concerns.
 
 ### Constructor (`PermMultipoleHead.__init__` / `PermMultipoleHeadSpec`)
 
+Energy-related fields (`energy_terms`, `damping`, `damping_alpha`, `cutoff`,
+`coulomb_constant`, `out_energy_key`) were removed in the
+`les-electrostatics` strip (2026-05-08); energy aggregation now lives in
+:class:`molpot.potentials.EwaldMultipoleEnergy`.
+
 ```python
 PermMultipoleHead(
     *,
@@ -102,16 +101,10 @@ PermMultipoleHead(
     charge: bool = True,
     dipole: bool = False,
     quadrupole: bool = False,
-    energy_terms: tuple[str, ...] = ("qq",),
-    cutoff: float | None = None,
-    damping: str = "none",                       # "none" | "erfc"
-    damping_alpha: float = 0.2,
     constrain_total_charge: bool = True,
     total_charge_key: str = "total_charge",
     embed_moments: bool = False,                 # raises in v0
     hidden_dim: int = 128,
-    coulomb_constant: float = 14.399645,         # eV · Å · e^-2
-    out_energy_key: str = "energy_es",
     out_charge_key: str = "atomic_charges",
     out_dipole_key: str = "atomic_dipoles",
     out_quadrupole_key: str = "atomic_quadrupoles",
@@ -140,16 +133,16 @@ survives the last-layer pruning. SO(3) equivariance for both readouts is
 regression-tested in
 ``tests/test_molpot/test_heads/test_multipole_symmetry.py``.
 
-Moment prediction and energy-term inclusion are **independent axes**:
+Moment prediction is the head's only responsibility post-strip:
 
 ```python
-# Predict q + μ + Θ but only spend FLOPs on q-q electrostatics
-PermMultipoleHead(input_dim=128, dipole=True, quadrupole=True, energy_terms=("qq",))
+# Predict q + μ + Θ; energy aggregation handled by EwaldMultipoleEnergy.
+PermMultipoleHead(input_dim=128, dipole=True, quadrupole=True)
 ```
 
-Construction is fail-fast: unknown energy terms / dampings raise `ValueError`;
-unimplemented terms raise `NotImplementedError`; `"qq"` without `charge=True`
-is rejected.
+Construction is fail-fast: at least one of `charge`/`dipole`/`quadrupole`
+must be `True`, and `tensor_irreps` is required when `dipole=True` or
+`quadrupole=True`.
 
 A `PermMultipoleHeadSpec(BaseModel)` snapshot lives on `self.config` after
 construction, mirroring `AllegroSpec`. Intended use from molcfg-driven
@@ -182,10 +175,18 @@ and returns a dict containing the same writes plus diagnostics.
 batch
  └─ Allegro                      (writes ("edges","edge_features"))
  └─ EdgeEnergyHead               (reads it → ("graphs", "energy"))
- └─ PermMultipoleHead               (reads same edges →
-                                   atomic moments + ("graphs","energy_es"))
+ └─ PermMultipoleHead            (reads same edges → atomic moments
+                                   into ("atoms", "atomic_charges"),
+                                   ("atoms", "atomic_dipoles"),
+                                   ("atoms", "atomic_quadrupoles"),
+                                   ("graphs", "molecular_dipole"))
+ └─ EwaldMultipoleEnergy          (reads moments → ("graphs", "energy_es"))
 loss = mse(energy + energy_es, U0)  +  λ_μ |μ_mol| MAE
 ```
+
+See the `les-electrostatics` spec for `EwaldMultipoleEnergy`'s realspace /
+reciprocal dispatch and the ``EwaldMultipoleEnergy(pbc=False)`` realspace
+path used for non-periodic systems like QM9.
 
 ## Data contract
 
@@ -208,7 +209,6 @@ loss = mse(energy + energy_es, U0)  +  λ_μ |μ_mol| MAE
 | `("atoms", out_charge_key)` | `(N,)` | `charge=True` |
 | `("atoms", out_dipole_key)` | `(N, 3)` | `dipole=True` |
 | `("atoms", out_quadrupole_key)` | `(N, 5)` | `quadrupole=True` |
-| `("graphs", out_energy_key)` | `(B,)` | always |
 | `("graphs", "molecular_dipole")` | `(B, 3)` | `charge=True` |
 | return dict only: `"charge_sum_pre_proj"` | `(B,)` | `constrain_total_charge=True` |
 | return dict only: `"charge_sum_post_proj"` | `(B,)` | `constrain_total_charge=True` |
@@ -246,13 +246,13 @@ edge_features        (E, F)
     → Θ (N, 5)                                              [equivariant ✅]
 
 (q, μ, pos, batch)        ─→ μ_mol = Σ_i (q_i r_i + μ_i)         (B, 3)
-(q, edge_index, bond_dist) ─→ E_qq = ½ Σ_edges k_C q_i q_j inv_r(r_ij)   (B,)
-                                where inv_r = 1/r  or  erfc(α r)/r
 ```
 
-The bidirectional encoder neighbour list yields the ordered pair sum, hence
-the `½` for unordered Coulomb. `cutoff=None` reuses the encoder's
-neighbour list as-is; setting `cutoff=...` masks edges past the value.
+After the 2026-05-08 strip, the head's internal pipeline emits moments
+only — no energy — and downstream :class:`EwaldMultipoleEnergy` produces
+``("graphs", "energy_es")`` from those moments. The bidirectional
+encoder neighbour list is no longer used by this head (it was only
+needed by the deleted qq/qm/mm pair-energy kernels).
 
 **Equivariant μ path is opt-in at the encoder level.** Setting
 ``Allegro(expose_tensor_track=True)`` does two things: writes the final
@@ -272,21 +272,20 @@ when the v1 ``cuequivariance`` ``l=2`` projection lands.
 
 | Property | Holds in v0? | Notes |
 |----------|--------------|-------|
-| Translation invariance of ``E_es`` | ✅ | depends on `bond_dist`, not `pos` |
-| Rotation invariance of ``E_qq`` | ✅ | depends only on `|r_ij|` and scalar `q` |
 | Rotation invariance of charge prediction | ✅ | `q_head` consumes scalars only |
 | Permutation equivariance of moments | ✅ | by construction (edge / atom indexing) |
 | Per-graph charge conservation | ✅ | linear projection enforces ``Σ_i q_i = Q_tot,g`` |
 | Smoothness at encoder cutoff for ``q`` | ✅ | inherited from `edge_features` (Allegro `u(r_ij)` gating) |
 | Rotation equivariance of ``μ`` head | ✅ | inlined scalar-gated l=1 readout over Allegro tensor track; tested in `test_multipole_symmetry.py` |
 | Rotation equivariance of ``Θ`` head | ✅ | inlined scalar-gated l=2 readout over Allegro tensor track (`l_max >= 2`); transforms under Wigner D⁽²⁾, tested in `test_multipole_symmetry.py` |
-| Energy conservation under autograd forces | ✅ | ``E_qq`` differentiable in `pos` via `bond_dist`; QM9 doesn't exercise it (no force labels) |
+| Energy / force invariants | (out of scope post-strip) | tested in `tests/test_molpot/test_potentials/test_ewald_multipole.py` against :class:`EwaldMultipoleEnergy`, not against this head. |
 
 **Units.** Predicted ``q`` is dimensionless (atomic units of charge `e`).
-``pos`` is Å. ``coulomb_constant = 14.399645 eV·Å·e⁻²`` so ``E_qq`` lands in
-**eV**, matching the AtomicDress→eV training convention. Molecular dipole
-``μ_mol`` is in ``e·Å``; QM9's `mu` is in **Debye** (1 D ≈ 0.20819 e·Å), so
-the training script converts before computing the auxiliary loss.
+``pos`` is Å. Molecular dipole ``μ_mol`` is in ``e·Å``; QM9's `mu` is in
+**Debye** (1 D ≈ 0.20819 e·Å), so the training script converts before
+computing the auxiliary loss. Energy units are owned by
+:class:`EwaldMultipoleEnergy` (default ``prefactor = 90.4756 eV·Å·e⁻²``
+yields eV).
 
 **Dtype.** All trainable layers use `molix.config.ftype` (consistent with
 `Allegro`, `EdgeEnergyHead`).

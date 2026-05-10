@@ -13,11 +13,9 @@ mol_project:
     rules_section: "## Architecture"
   doc:
     style: google
-  perf:
-    focus: pytorch
   science:
     required: true
-  notes_path: .claude/NOTES.md
+  notes_path: .claude/notes/notes.md
   specs_path: .claude/specs/
 ---
 

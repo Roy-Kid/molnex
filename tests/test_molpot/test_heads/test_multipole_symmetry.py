@@ -1,5 +1,5 @@
 """Symmetry tests for the Allegro + ``PermMultipoleHead`` ("permanent multipole")
-composition.
+composition — readout-only.
 
 Three physical symmetries that every output of the composed pipeline must
 satisfy — separate from the encoder-only checks in
@@ -8,12 +8,10 @@ satisfy — separate from the encoder-only checks in
 ==================================  ==============  ==============  ==============
 output                              translation     rotation        permutation
 ==================================  ==============  ==============  ==============
-``("graphs", "energy_es")``         invariant       invariant       invariant
 ``("atoms", "atomic_charges")``     invariant       invariant       equivariant
 ``("graphs", "molecular_dipole")``  invariant¹      equivariant     invariant
 ``("atoms", "atomic_dipoles")``     invariant       l=1 equivariant equivariant
 ``("atoms", "atomic_quadrupoles")`` invariant       l=2 equivariant equivariant
-forces² ``F = -∂E_es/∂pos``         invariant       equivariant     equivariant
 ==================================  ==============  ==============  ==============
 
 ¹ Translation invariance of ``μ_mol`` only holds when total predicted
@@ -21,10 +19,12 @@ forces² ``F = -∂E_es/∂pos``         invariant       equivariant     equivar
   ``Σ q_i = total_charge``; for a neutral target (``= 0``) that erases the
   shift term ``(Σ q_i)·t``.
 
-² Forces are tested only for the charge-only (no dipole) cell because
-  the dipole output is itself a vector — testing its gradient w.r.t.
-  positions adds nothing beyond the equivariance check on ``μ_atom``
-  itself.
+This file deliberately does **not** test ``energy_es`` or autograd forces:
+the screened-Coulomb / Ewald multipole energy now lives in
+:class:`molpot.potentials.EwaldMultipoleEnergy`, whose own physics-oracle
+suite at ``tests/test_molpot/test_potentials/test_ewald_multipole.py``
+covers translation / rotation / permutation invariance of the energy and
+the corresponding ``F = -∂E/∂pos`` autograd forces.
 
 For l=2 (quadrupole) rotation tests, plain 3×3 matrices no longer suffice:
 the output transforms under the Wigner ``D⁽²⁾(R)`` representation, so the
@@ -174,7 +174,7 @@ def _build_allegro(*, expose_tensor_track: bool) -> Allegro:
 
 @pytest.fixture
 def charge_only_pipeline():
-    """Allegro (scalar-track only) → PermMultipoleHead(charge=True, qq)."""
+    """Allegro (scalar-track only) → PermMultipoleHead(charge=True)."""
     encoder = _build_allegro(expose_tensor_track=False)
     head = PermMultipoleHead(
         input_dim=encoder.num_scalar_features * (encoder.num_layers + 1),
@@ -182,7 +182,6 @@ def charge_only_pipeline():
         charge=True,
         dipole=False,
         quadrupole=False,
-        energy_terms=("qq",),
         constrain_total_charge=True,
         hidden_dim=16,
     ).eval()
@@ -191,7 +190,7 @@ def charge_only_pipeline():
 
 @pytest.fixture
 def charge_dipole_pipeline():
-    """Allegro (tensor track exposed) → PermMultipoleHead(charge=True, dipole=True, qq)."""
+    """Allegro (tensor track exposed) → PermMultipoleHead(charge=True, dipole=True)."""
     encoder = _build_allegro(expose_tensor_track=True)
     head = PermMultipoleHead(
         input_dim=encoder.num_scalar_features * (encoder.num_layers + 1),
@@ -199,7 +198,6 @@ def charge_dipole_pipeline():
         charge=True,
         dipole=True,
         quadrupole=False,
-        energy_terms=("qq",),
         constrain_total_charge=True,
         hidden_dim=16,
         tensor_irreps=encoder.tensor_track_irreps,
@@ -217,7 +215,6 @@ def full_multipole_pipeline():
         charge=True,
         dipole=True,
         quadrupole=True,
-        energy_terms=("qq",),
         constrain_total_charge=True,
         hidden_dim=16,
         tensor_irreps=encoder.tensor_track_irreps,
@@ -226,11 +223,11 @@ def full_multipole_pipeline():
 
 
 class _PipelineModule(nn.Module):
-    """Minimal Allegro→PermMultipoleHead pipeline with autograd-friendly geometry.
+    """Minimal Allegro→PermMultipoleHead pipeline.
 
     Re-derives ``bond_diff`` / ``bond_dist`` from ``pos`` inside ``forward``
-    so callers can request forces via ``torch.autograd.grad`` without the
-    transform helpers having to allocate a grad-tracking tensor.
+    so that the encoder always sees fresh edge geometry under
+    rotate / translate / permute transforms.
     """
 
     def __init__(self, encoder: Allegro, head: PermMultipoleHead):
@@ -250,7 +247,7 @@ class _PipelineModule(nn.Module):
 
 
 class TestTranslationInvariance:
-    """Rigid shift of all atoms must not change the predicted moments / energy.
+    """Rigid shift of all atoms must not change the predicted moments.
 
     For neutral systems the total-charge projection enforces Σ q_proj = 0,
     so the molecular dipole's origin-dependent piece (Σ q_i)·t vanishes
@@ -268,7 +265,6 @@ class TestTranslationInvariance:
 
         # Float32 ULP — translation amplifies pos magnitudes by ~10×, so
         # bond_diff differs at ~1e-5; tolerances mirror the encoder tests.
-        assert torch.allclose(ref["energy_es"], shifted["energy_es"], atol=1e-4, rtol=1e-4)
         assert torch.allclose(
             ref["atomic_charges"], shifted["atomic_charges"], atol=1e-4, rtol=1e-4
         )
@@ -285,7 +281,6 @@ class TestTranslationInvariance:
             ref = charge_dipole_pipeline(small_molecule_neutral.clone())
             shifted = charge_dipole_pipeline(translate_graph(small_molecule_neutral, t))
 
-        assert torch.allclose(ref["energy_es"], shifted["energy_es"], atol=1e-4, rtol=1e-4)
         assert torch.allclose(
             ref["atomic_charges"], shifted["atomic_charges"], atol=1e-4, rtol=1e-4
         )
@@ -298,7 +293,7 @@ class TestTranslationInvariance:
 
     @pytest.mark.parametrize("seed", SEEDS)
     def test_full_multipole_pipeline(self, full_multipole_pipeline, small_molecule_neutral, seed):
-        """All five outputs (energy, q, μ_atom, μ_mol, Θ_atom) under T."""
+        """All four moment outputs (q, μ_atom, μ_mol, Θ_atom) under T."""
         torch.manual_seed(seed)
         t = torch.randn(3) * 10.0
 
@@ -307,23 +302,12 @@ class TestTranslationInvariance:
             shifted = full_multipole_pipeline(translate_graph(small_molecule_neutral, t))
 
         for key in (
-            "energy_es",
             "atomic_charges",
             "atomic_dipoles",
             "molecular_dipole",
             "atomic_quadrupoles",
         ):
             assert torch.allclose(ref[key], shifted[key], atol=1e-4, rtol=1e-4), key
-
-    @pytest.mark.parametrize("seed", SEEDS)
-    def test_force_invariance(self, charge_only_pipeline, small_molecule_neutral, seed):
-        """``F = -∂E_es/∂pos`` is translation-invariant."""
-        torch.manual_seed(seed)
-        t = torch.randn(3) * 10.0
-
-        f_ref = _forces_from(charge_only_pipeline, small_molecule_neutral)
-        f_shift = _forces_from(charge_only_pipeline, translate_graph(small_molecule_neutral, t))
-        assert torch.allclose(f_ref, f_shift, atol=1e-4, rtol=1e-4)
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +327,6 @@ class TestRotationEquivariance:
             ref = charge_only_pipeline(small_molecule_neutral.clone())
             rot = charge_only_pipeline(rotate_graph(small_molecule_neutral, R))
 
-        assert torch.allclose(ref["energy_es"], rot["energy_es"], atol=1e-4, rtol=1e-4)
         assert torch.allclose(ref["atomic_charges"], rot["atomic_charges"], atol=1e-4, rtol=1e-4)
 
     @pytest.mark.parametrize("seed", SEEDS)
@@ -395,16 +378,6 @@ class TestRotationEquivariance:
         theta_rotated = _rotate_l2(ref["atomic_quadrupoles"], gamma, beta, alpha)
         assert torch.allclose(theta_rotated, rot["atomic_quadrupoles"], atol=1e-4, rtol=1e-4)
 
-    @pytest.mark.parametrize("seed", SEEDS)
-    def test_force_equivariance(self, charge_only_pipeline, small_molecule_neutral, seed):
-        """``F(R·x) == R · F(x)``."""
-        torch.manual_seed(seed)
-        R = random_rotation_matrix()
-
-        f_ref = _forces_from(charge_only_pipeline, small_molecule_neutral)
-        f_rot = _forces_from(charge_only_pipeline, rotate_graph(small_molecule_neutral, R))
-        assert torch.allclose(rotate_vectors(f_ref, R), f_rot, atol=1e-4, rtol=1e-4)
-
 
 # ---------------------------------------------------------------------------
 # Permutation equivariance
@@ -425,7 +398,6 @@ class TestPermutationEquivariance:
             ref = charge_only_pipeline(small_molecule_neutral.clone())
             permuted = charge_only_pipeline(permute_graph(small_molecule_neutral, perm))
 
-        assert torch.allclose(ref["energy_es"], permuted["energy_es"], atol=1e-5, rtol=1e-5)
         assert torch.allclose(
             ref["molecular_dipole"], permuted["molecular_dipole"], atol=1e-5, rtol=1e-5
         )
@@ -487,30 +459,3 @@ class TestPermutationEquivariance:
             atol=1e-5,
             rtol=1e-5,
         )
-
-    @pytest.mark.parametrize("seed", SEEDS)
-    def test_force_equivariance(self, charge_only_pipeline, small_molecule_neutral, seed):
-        """``F(perm(x))[i] == F(x)[perm[i]]``."""
-        torch.manual_seed(seed)
-        n = small_molecule_neutral["atoms", "Z"].shape[0]
-        perm = torch.randperm(n)
-
-        f_ref = _forces_from(charge_only_pipeline, small_molecule_neutral)
-        f_perm = _forces_from(charge_only_pipeline, permute_graph(small_molecule_neutral, perm))
-        assert torch.allclose(f_ref[perm], f_perm, atol=1e-5, rtol=1e-5)
-
-
-# ---------------------------------------------------------------------------
-# helpers
-# ---------------------------------------------------------------------------
-
-
-def _forces_from(pipeline: _PipelineModule, batch: GraphBatch) -> torch.Tensor:
-    """Differentiate ``E_es.sum()`` w.r.t. ``pos`` and return ``-∂E/∂pos``."""
-    work = batch.clone()
-    pos = work["atoms", "pos"].clone().requires_grad_(True)
-    work["atoms", "pos"] = pos
-    out = pipeline(work)
-    energy = out["energy_es"].sum()
-    (grad,) = torch.autograd.grad(energy, pos, create_graph=False)
-    return -grad

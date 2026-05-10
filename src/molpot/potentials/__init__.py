@@ -14,6 +14,10 @@ from molpot.potentials.angle_harmonic import AngleHarmonic
 from molpot.potentials.base import BasePotential
 from molpot.potentials.bond_harmonic import BondHarmonic
 from molpot.potentials.dihedral_harmonic import DihedralHarmonic
+from molpot.potentials.ewald_multipole import (
+    EwaldMultipoleEnergy,
+    EwaldMultipoleEnergySpec,
+)
 from molpot.potentials.lj126 import LJ126, lorentz_berthelot
 from molpot.potentials.mixing import geometric_arithmetic_mixing
 from molpot.potentials.nonbonded import (
@@ -33,6 +37,8 @@ __all__ = [
     "BondHarmonic",
     "AngleHarmonic",
     "DihedralHarmonic",
+    "EwaldMultipoleEnergy",
+    "EwaldMultipoleEnergySpec",
     "geometric_arithmetic_mixing",
     "RepulsionExp6",
     "DispersionC6",
