@@ -45,10 +45,17 @@ import sys
 from pathlib import Path
 from typing import IO, Any
 
-from mollog import FileHandler, Filter, Level, Logger, StreamHandler, TextFormatter
+from mollog import (
+    FileHandler,
+    Filter,
+    Formatter,
+    Level,
+    Logger,
+    LogRecord,
+    StreamHandler,
+    TextFormatter,
+)
 from mollog import get_logger as _mollog_get_logger
-from mollog.formatter import Formatter
-from mollog.record import LogRecord
 
 __all__ = [
     "MOLIX_LOGGER_NAME",

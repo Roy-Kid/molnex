@@ -92,7 +92,7 @@ def _make_record(
 ) -> object:
     from datetime import datetime
 
-    from mollog.record import LogRecord
+    from mollog import LogRecord
 
     return LogRecord(
         level=Level.INFO,
