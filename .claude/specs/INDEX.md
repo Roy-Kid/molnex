@@ -6,5 +6,6 @@ once ratified, they are the authoritative description of a feature.
 | Slug | Title | Status | Owner agent | Created |
 |------|-------|--------|-------------|---------|
 | [multipole-layer](multipole-layer.md) | Direct permanent multipole layer over Allegro (`molpot.heads.PermMultipoleHead`) | draft | `mn-impl` | 2026-04-25 |
-| [sonata-03-bench](sonata-03-bench.md) | Sonata long-range periodic benchmark — bulk liquid water (chain 3/4) | approved | `mol:impl` | 2026-05-10 |
 | [sonata-04-docs](sonata-04-docs.md) | Sonata boundary documentation + design doc (chain 4/4) | approved | `mol:impl` | 2026-05-10 |
+| [sonata-05-data](sonata-05-data.md) | Real bulk-water + charged-dimer Source classes for HPC validation (chain 5/2·1) | approved | `mol:impl` | 2026-05-10 |
+| [sonata-05-hpc](sonata-05-hpc.md) | First-class DDP wrap shim for `molix.core.Trainer` — single-node multi-GPU (chain 5/2·2) | approved | `mol:impl` | 2026-05-10 |
