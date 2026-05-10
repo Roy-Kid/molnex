@@ -130,9 +130,7 @@ class Polarization(nn.Module):
         r_vec = pos[dst] - pos[src]  # (E, 3)
         r_norm = r_vec.norm(dim=-1, keepdim=True).clamp(min=1e-8)  # (E, 1)
         r_hat = r_vec / r_norm  # (E, 3) unit
-        field_contrib = (
-            self.coulomb_prefactor * charge[dst].unsqueeze(-1) * r_hat / r_norm.pow(2)
-        )
+        field_contrib = self.coulomb_prefactor * charge[dst].unsqueeze(-1) * r_hat / r_norm.pow(2)
         E_perm = torch.zeros(N, 3, dtype=dtype, device=device)
         E_perm.index_add_(0, src, field_contrib)
 

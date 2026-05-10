@@ -80,12 +80,14 @@ Three flagged caveats requiring user awareness:
 
 1. **🟡 Flag #1 — multipole-S(k) provenance.** The multipole structure
    factor and per-atom μ²/Q² self-corrections are NOT present in the
-   v1 arXiv preprints of King et al. *Nat. Commun.* 16:8763 (2025)
-   (arXiv:2412.15455v1) or Kim et al. *J. Chem. Theory Comput.*
-   doi:10.1021/acs.jctc.5c01400 (arXiv:2507.14302v1). They appear only
-   in the upstream LES code. Derivation here matches
-   `les.module.make_kernels` line-by-line; corroboration against the
-   published Nat. Commun. SI is pending.
+   v1 arXiv preprint of King et al. *Nat. Commun.* 16:8763 (2025)
+   (arXiv:2412.15455v1); they appear only in the upstream LES code.
+   The canonical published derivation of the multipole-Ewald split
+   with explicit per-multipole self-corrections is Aguado & Madden,
+   *J. Chem. Phys.* 119, 7471 (2003) — see the references block.
+   The implementation here matches `les.module.make_kernels`
+   line-by-line; corroboration against the published Nat. Commun. SI
+   is pending.
 
 2. **🟢 Flag #2 — Q tracelessness.** The quadrupole self-correction
    ``‖Q‖_F² / (10 σ⁵ (2π)^(3/2))`` assumes Q symmetric and traceless.
@@ -104,12 +106,17 @@ References:
 
 * Cheng B., *Latent Ewald summation for machine-learning potentials*,
   npj Comput. Mater. **11**, 80 (2025).
-  https://doi.org/10.1038/s41524-025-01585-7
+  https://doi.org/10.1038/s41524-025-01577-7
 * King D. S. et al., *Latent equivariant ML force fields with long-range
   electrostatics*, Nat. Commun. **16**, 8763 (2025).
-  https://doi.org/10.1038/s41467-025-58326-z
-* Kim J. et al., *Polarizable LES for ML potentials*, J. Chem. Theory
-  Comput., doi:10.1021/acs.jctc.5c01400 (2025).
+  https://doi.org/10.1038/s41467-025-63852-x
+* Aguado A. & Madden P. A., *Ewald summation of electrostatic multipole
+  interactions up to the quadrupolar level*, J. Chem. Phys. **119**,
+  7471 (2003). https://doi.org/10.1063/1.1605941 — canonical reference
+  for the multipole-Ewald split with explicit per-multipole
+  self-corrections.
+* Stone A. J., *The Theory of Intermolecular Forces*, 2nd ed. (Oxford,
+  2013), §3 — multipole interaction kernels.
 * Upstream code: https://github.com/ChengUCB/les (treated as oracle for
   the brute-force NumPy parity tests under
   ``tests/_oracles/screened_coulomb.py``).
@@ -244,9 +251,9 @@ class EwaldMultipoleEnergy(BasePotential):
         self.use_epsilon_r_scaling = cfg.use_epsilon_r_scaling
 
         # Derived constants.
-        self._a = 1.0 / (cfg.sigma * (2.0 ** 0.5))                       # = 1/(σ√2)
-        self._sigma_sq_half = cfg.sigma * cfg.sigma / 2.0                # σ²/2
-        self._k_sq_max = (2.0 * torch.pi / cfg.dl) ** 2                  # k-space cutoff
+        self._a = 1.0 / (cfg.sigma * (2.0**0.5))  # = 1/(σ√2)
+        self._sigma_sq_half = cfg.sigma * cfg.sigma / 2.0  # σ²/2
+        self._k_sq_max = (2.0 * torch.pi / cfg.dl) ** 2  # k-space cutoff
         # ``norm_const = prefactor / (2π)`` is the ``1/(4πε₀)`` factor used
         # in the bare per-pair real-space kernels (since
         # ``prefactor = 1/(2ε₀) = 2π · 1/(4πε₀)``). Reciprocal sums use
@@ -315,10 +322,7 @@ class EwaldMultipoleEnergy(BasePotential):
         )
 
         rr = rhat[..., :, None] * rhat[..., None, :]  # (N, N, 3, 3)
-        f_uu = (
-            s2[:, :, None, None] * rr
-            - s1[:, :, None, None] * eye3[None, None]
-        ) * norm_const
+        f_uu = (s2[:, :, None, None] * rr - s1[:, :, None, None] * eye3[None, None]) * norm_const
         f_qu = s1[..., None] * r_ij * norm_const  # (N, N, 3)
 
         rinv4 = rinv3 * rinv
@@ -344,8 +348,7 @@ class EwaldMultipoleEnergy(BasePotential):
             + torch.einsum("bc,ija->ijabc", eye3, rhat)
         )
         f_Qu = (
-            s3[..., None, None, None] * rrr
-            - (s2 * rinv)[..., None, None, None] * term_delta_r
+            s3[..., None, None, None] * rrr - (s2 * rinv)[..., None, None, None] * term_delta_r
         ) * norm_const
 
         rrrr = torch.einsum("ija,ijb,ijc,ijd->ijabcd", rhat, rhat, rhat, rhat)
@@ -519,18 +522,14 @@ class EwaldMultipoleEnergy(BasePotential):
             else:
                 cell_i = cell[i]
 
-            use_reciprocal = (
-                cell_i is not None and torch.linalg.det(cell_i).abs() > 1e-6
-            )
+            use_reciprocal = cell_i is not None and torch.linalg.det(cell_i).abs() > 1e-6
 
             if use_reciprocal:
                 sub = self._compute_reciprocal(
                     pos_i, q_i, cell_i, mu_i, Q_i, kappa_i, alpha_i, e_ext
                 )
             else:
-                sub = self._compute_realspace(
-                    pos_i, q_i, mu_i, Q_i, kappa_i, alpha_i, e_ext
-                )
+                sub = self._compute_realspace(pos_i, q_i, mu_i, Q_i, kappa_i, alpha_i, e_ext)
 
             per_graph_pot.append(sub["pot"])
             phi_full[mask] = sub["phi"]
@@ -651,9 +650,9 @@ class EwaldMultipoleEnergy(BasePotential):
         n1 = torch.arange(-Nk[0], Nk[0] + 1, device=device)
         n2 = torch.arange(-Nk[1], Nk[1] + 1, device=device)
         n3 = torch.arange(-Nk[2], Nk[2] + 1, device=device)
-        nvec = torch.stack(
-            torch.meshgrid(n1, n2, n3, indexing="ij"), dim=-1
-        ).reshape(-1, 3).to(dtype)
+        nvec = (
+            torch.stack(torch.meshgrid(n1, n2, n3, indexing="ij"), dim=-1).reshape(-1, 3).to(dtype)
+        )
         kvec = nvec @ G  # (M, 3)
         k_sq = (kvec * kvec).sum(dim=1)
         keep = (k_sq > 0.0) & (k_sq <= k_sq_max)
@@ -706,9 +705,7 @@ class EwaldMultipoleEnergy(BasePotential):
 
         # Per-atom potential at r_i = real part of e^{-i k·r_i} S(k).
         prefactor_arr = factors * 2.0 * kfac / volume * prefactor  # (M,)
-        term_real = (
-            S_real.unsqueeze(0) * cos_kr + S_imag.unsqueeze(0) * sin_kr
-        )  # (N, M)
+        term_real = S_real.unsqueeze(0) * cos_kr + S_imag.unsqueeze(0) * sin_kr  # (N, M)
         e_phi = torch.einsum("m,im->i", prefactor_arr, term_real)
 
         if self.remove_self_interaction:
@@ -716,9 +713,7 @@ class EwaldMultipoleEnergy(BasePotential):
             e_phi = e_phi - q * sc["phi_q"]
 
         # Per-atom field = imag part of e^{-i k·r_i} S(k) · k.
-        term_imag = (
-            S_real.unsqueeze(0) * sin_kr - S_imag.unsqueeze(0) * cos_kr
-        )  # (N, M)
+        term_imag = S_real.unsqueeze(0) * sin_kr - S_imag.unsqueeze(0) * cos_kr  # (N, M)
         e_field = torch.einsum("m,im,mc->ic", prefactor_arr, term_imag, kvec)
 
         if self.remove_self_interaction and mu is not None:

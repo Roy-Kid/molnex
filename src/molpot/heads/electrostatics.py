@@ -77,11 +77,11 @@ def _l2_to_cartesian(t: torch.Tensor) -> torch.Tensor:
     """
     n = t.shape[0]
     out = torch.zeros(n, 3, 3, dtype=t.dtype, device=t.device)
-    out[:, 0, 1] = out[:, 1, 0] = t[:, 0]      # m=-2 → xy
-    out[:, 1, 2] = out[:, 2, 1] = t[:, 1]      # m=-1 → yz
-    out[:, 0, 2] = out[:, 2, 0] = t[:, 3]      # m=+1 → xz
-    inv_sqrt3 = 1.0 / (3.0 ** 0.5)
-    out[:, 0, 0] = -inv_sqrt3 * t[:, 2] + t[:, 4]   # 1/3·(3·xx-r²) = xx - tr/3 part
+    out[:, 0, 1] = out[:, 1, 0] = t[:, 0]  # m=-2 → xy
+    out[:, 1, 2] = out[:, 2, 1] = t[:, 1]  # m=-1 → yz
+    out[:, 0, 2] = out[:, 2, 0] = t[:, 3]  # m=+1 → xz
+    inv_sqrt3 = 1.0 / (3.0**0.5)
+    out[:, 0, 0] = -inv_sqrt3 * t[:, 2] + t[:, 4]  # 1/3·(3·xx-r²) = xx - tr/3 part
     out[:, 1, 1] = -inv_sqrt3 * t[:, 2] - t[:, 4]
     out[:, 2, 2] = 2.0 * inv_sqrt3 * t[:, 2]
     return out
@@ -116,12 +116,10 @@ def _equivariant_l_readout(
     gated_ir_mul = gated.transpose(1, 2).reshape(e, block_size)
     edge_out = collapse(gated_ir_mul)  # (E, 2ℓ+1)
 
-    atom_out = torch.zeros(
-        n_nodes, out_dim, dtype=edge_out.dtype, device=edge_out.device
-    )
+    atom_out = torch.zeros(n_nodes, out_dim, dtype=edge_out.dtype, device=edge_out.device)
     atom_out.scatter_add_(0, src.unsqueeze(-1).expand_as(edge_out), edge_out)
     if avg_num_neighbors is not None:
-        atom_out = atom_out / (avg_num_neighbors ** 0.5)
+        atom_out = atom_out / (avg_num_neighbors**0.5)
     return atom_out
 
 

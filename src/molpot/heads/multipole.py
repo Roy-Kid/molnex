@@ -362,9 +362,7 @@ class PermMultipoleHead(nn.Module):
         #    equivariant moment readouts do their own source-side scatter
         #    inside _equivariant_moment_readout).
         atom_feats = (
-            self._scatter_mean_to_atoms(edge_features, edge_index, n_nodes)
-            if self.charge
-            else None
+            self._scatter_mean_to_atoms(edge_features, edge_index, n_nodes) if self.charge else None
         )  # (N, F)
 
         out: dict[str, torch.Tensor] = {}

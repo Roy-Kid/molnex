@@ -49,12 +49,12 @@ from molrep.embedding.node import (
 )
 from molrep.embedding.radial import BesselRBF
 from molrep.interaction.element import ElementUpdate
-from molrep.interaction.radial import RadialWeightMLP
 from molrep.interaction.product import (
     ConvTP,
     irreps_from_l_max,
     sh_irreps_from_l_max,
 )
+from molrep.interaction.radial import RadialWeightMLP
 from molrep.readout.product import ProductHead
 
 # ===========================================================================
