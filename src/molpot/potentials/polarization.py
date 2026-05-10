@@ -51,10 +51,34 @@ References:
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 
 import torch
 import torch.nn as nn
+
+# Module-level marker set to ``True`` by
+# :class:`molpot.composition.Sonata`'s ``forward`` (and any future
+# LES-style electrostatics composer) after it has evaluated the
+# σ-screened multipole-Coulomb / Ewald energy on a batch. A subsequent
+# call to :meth:`Polarization.forward` reads this flag and emits a
+# ``UserWarning`` mentioning ``double-count`` so a user who hand-builds
+# a parallel ``Sonata + Polarization`` graph does not silently
+# double-count induction (Polarization's CG Thole solve is
+# self-consistent; Sonata's LES α-mode is non-self-consistent linear
+# response — composing both is physically wrong).
+_LES_ELECTROSTATICS_PRECOMPUTED = False
+
+
+def _set_les_electrostatics_precomputed(value: bool = True) -> None:
+    """Mark whether LES-style electrostatics has been evaluated this session.
+
+    Sonata's forward calls this with ``value=True`` at the end of its
+    Ewald evaluation. Tests that need to restore the default can call
+    with ``value=False``.
+    """
+    global _LES_ELECTROSTATICS_PRECOMPUTED
+    _LES_ELECTROSTATICS_PRECOMPUTED = bool(value)
 
 
 class Polarization(nn.Module):
@@ -68,6 +92,21 @@ class Polarization(nn.Module):
          ``Tᵢⱼ = k_e · λ(uᵢⱼ) · (3 r̂r̂ − I) / rᵢⱼ³``.
       3. Solving ``(α⁻¹ − T) · μ = E_perm`` per molecule via CG.
       4. ``U_pol = -½ Σᵢ μᵢ · E_perm,i`` per molecule.
+
+    See also:
+        :class:`molpot.composition.Sonata` — the static permanent-
+        electrostatics composer that wraps
+        :class:`molpot.potentials.EwaldMultipoleEnergy` for the LES
+        (Latent Ewald Summation) framework. Sonata's forthcoming
+        ``LesPolarizable`` sibling adds inline non-self-consistent
+        induced response via the ``α``-mode of
+        :class:`EwaldMultipoleEnergy`. Pick exactly one model line:
+        this :class:`Polarization` (classical-polarizable AMOEBA-style)
+        OR the LES α-mode (ML interatomic potential). Composing both
+        on the same atoms double-counts induction; calling
+        :meth:`Polarization.forward` after a :class:`Sonata` forward in
+        the same Python process emits a ``UserWarning`` matching
+        ``double-count`` so the hazard surfaces at runtime.
 
     Args:
         damping_factor: Thole-style damping factor for the dipole-dipole
@@ -111,6 +150,27 @@ class Polarization(nn.Module):
         Returns:
             Per-graph polarization energy ``(B,)`` or scalar.
         """
+        if _LES_ELECTROSTATICS_PRECOMPUTED:
+            warnings.warn(
+                "Polarization.forward called after an LES-style "
+                "electrostatics composer (e.g. molpot.composition.Sonata) "
+                "has already evaluated electrostatics in this session. "
+                "Combining this self-consistent CG Thole induced-dipole "
+                "solve with the LES α-mode (non-self-consistent linear "
+                "response) double-counts induction. Pick exactly one "
+                "model line: Polarization (classical-polarizable "
+                "AMOEBA-style) or Sonata's future LesPolarizable line "
+                "(ML interatomic potential).",
+                UserWarning,
+                stacklevel=2,
+            )
+            # One-shot consumption: reset the flag so subsequent
+            # ``Polarization.forward`` calls in unrelated test
+            # contexts (or downstream pipelines that no longer
+            # interleave Sonata) do not re-warn. A subsequent
+            # ``Sonata.forward`` will set the flag again.
+            _set_les_electrostatics_precomputed(False)
+
         N = pos.shape[0]
         device = pos.device
         dtype = pos.dtype

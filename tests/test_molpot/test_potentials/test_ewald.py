@@ -127,10 +127,10 @@ def _build_water_with_probe(probe_r: float = 30.0) -> tuple[torch.Tensor, torch.
     OH = 0.9572  # Å
     pos = torch.tensor(
         [
-            [0.0, 0.0, 0.0],                                    # O
-            [OH * math.sin(half_angle), 0.0, OH * math.cos(half_angle)],   # H1
+            [0.0, 0.0, 0.0],  # O
+            [OH * math.sin(half_angle), 0.0, OH * math.cos(half_angle)],  # H1
             [-OH * math.sin(half_angle), 0.0, OH * math.cos(half_angle)],  # H2
-            [0.0, 0.0, probe_r],                                # ghost probe
+            [0.0, 0.0, probe_r],  # ghost probe
         ],
         dtype=torch.float64,
     )
@@ -204,6 +204,206 @@ def test_autograd_forces_match_finite_difference() -> None:
 
     max_err = float((f_auto - f_fd).abs().max())
     assert max_err < 1e-5, f"max force error {max_err:.3e} eV/Å (FD vs autograd)"
+
+
+def _synthetic_periodic_inputs(
+    seed: int = 0,
+    n: int = 6,
+    L: float = 10.0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Build deterministic float64 (pos, q, μ, Q, cell) for FD tests.
+
+    The cell is a slightly anisotropic axis-aligned box (no near-equal
+    axis lengths) with ``L = 10 Å``; with the default ``dl = 2 Å`` this
+    keeps every reciprocal k-vector at least ~2 % away from the
+    cutoff sphere ``k² = (π)²``, so even without the frozen-grid path
+    rotation invariance is solid. Charges are exactly neutral and the
+    quadrupoles are symmetric and traceless (the two algebraic
+    contracts ``EwaldMultipoleEnergy`` requires).
+    """
+    rng = np.random.default_rng(seed)
+    pos = torch.from_numpy(rng.uniform(0.5, L - 0.5, size=(n, 3))).to(torch.float64)
+    q_np = rng.standard_normal(n)
+    q_np -= q_np.mean()  # neutralise (algebraic identity from PermMultipoleHead)
+    q = torch.from_numpy(q_np).to(torch.float64)
+    mu = torch.from_numpy(rng.uniform(-0.3, 0.3, size=(n, 3))).to(torch.float64)
+    # Build a symmetric traceless (N, 3, 3) Q tensor. M = (M + Mᵀ)/2 - tr/3 · I.
+    Q_full = torch.from_numpy(rng.uniform(-0.2, 0.2, size=(n, 3, 3))).to(torch.float64)
+    Q_sym = 0.5 * (Q_full + Q_full.transpose(-1, -2))
+    Q_trace = torch.einsum("nii->n", Q_sym)
+    Q = Q_sym - (Q_trace / 3.0).unsqueeze(-1).unsqueeze(-1) * torch.eye(3, dtype=torch.float64)
+    cell = torch.tensor(
+        [[L, 0.0, 0.0], [0.0, L * 1.05, 0.0], [0.0, 0.0, L * 0.95]],
+        dtype=torch.float64,
+    )
+    return pos, q, mu, Q, cell
+
+
+def test_periodic_force_fd_synthetic_multipoles_frozen_grid() -> None:
+    """Strict autograd-vs-FD agreement on Ewald-only with synthetic multipoles.
+
+    Pins the contract that the periodic Ewald path is differentiable
+    in atom positions to ``≤ 1e-5 eV/Å`` (central FD, ``dh = 1e-4 Å``).
+    Position FD does not change the cell, so this test passes with or
+    without the frozen-grid hook — but we exercise the
+    ``kvec_indices`` path here as well so a regression to the frozen
+    path is caught alongside the production path.
+    """
+    pos, q, mu, Q, cell = _synthetic_periodic_inputs(seed=0)
+    pot = EwaldMultipoleEnergy(sigma=1.0, dl=2.0, prefactor=PREFACTOR)
+    nvec = pot.enumerate_kvec_indices(cell)
+
+    pos_grad = pos.detach().requires_grad_(True)
+    out = pot.forward(q=q, pos=pos_grad, cell=cell, mu=mu, Q=Q, kvec_indices=nvec)
+    energy = out["pot"]
+    (grad,) = torch.autograd.grad(energy, pos_grad, create_graph=False)
+    f_auto = -grad
+
+    delta = 1e-4
+    f_fd = torch.zeros_like(pos)
+    for i, c in itertools.product(range(pos.shape[0]), range(3)):
+        plus = pos.clone()
+        plus[i, c] += delta
+        u_plus = pot.forward(q=q, pos=plus, cell=cell, mu=mu, Q=Q, kvec_indices=nvec)["pot"].item()
+        minus = pos.clone()
+        minus[i, c] -= delta
+        u_minus = pot.forward(q=q, pos=minus, cell=cell, mu=mu, Q=Q, kvec_indices=nvec)[
+            "pot"
+        ].item()
+        f_fd[i, c] = -(u_plus - u_minus) / (2 * delta)
+
+    max_err = float((f_auto - f_fd).abs().max())
+    assert max_err < 1e-5, f"max force error {max_err:.3e} eV/Å (FD vs autograd)"
+
+
+def test_periodic_stress_fd_synthetic_multipoles_frozen_grid() -> None:
+    """Strict autograd-vs-FD agreement on Ewald-only stress under cell strain.
+
+    Uses the frozen-grid path (``kvec_indices`` taken once on the
+    unperturbed cell) so the ``keep = k² ≤ k_sq_max`` step
+    discontinuity does not enter the FD difference. Without this, FD
+    diverges from autograd by O(1) when the FD step crosses a
+    boundary k-vector; with this, the cell-strain derivative is a
+    smooth function of strain and FD agrees to ``1e-5`` relative.
+
+    This is the canonical PME / Ewald FD-stress technique — see
+    LAMMPS ``fix_numdiff_virial`` for the public statement of the
+    underlying numerical hazard.
+    """
+    pos, q, mu, Q, cell = _synthetic_periodic_inputs(seed=1)
+    pot = EwaldMultipoleEnergy(sigma=1.0, dl=2.0, prefactor=PREFACTOR)
+    nvec = pot.enumerate_kvec_indices(cell)
+
+    # Autograd stress via differentiable strain: pos → (I + ε)·pos,
+    # cell → (I + ε)·cell.
+    eye3 = torch.eye(3, dtype=torch.float64)
+    strain = torch.zeros(3, 3, dtype=torch.float64, requires_grad=True)
+    sym_eps = 0.5 * (strain + strain.transpose(-1, -2))
+    I_plus = eye3 + sym_eps
+    pos_eps = pos @ I_plus.T
+    cell_eps = I_plus @ cell
+
+    out = pot.forward(q=q, pos=pos_eps, cell=cell_eps, mu=mu, Q=Q, kvec_indices=nvec)
+    energy = out["pot"]
+    V = float(torch.linalg.det(cell).abs())
+    (stress_eps,) = torch.autograd.grad(energy, strain, create_graph=False)
+    # Symmetric strain convention (off-diagonal counts ε_αβ = ε_βα as one
+    # variable): doubles off-diagonal autograd, leaves diagonal alone.
+    stress_eps_sym = stress_eps + stress_eps.T - torch.diag_embed(torch.diagonal(stress_eps))
+    sigma_auto = stress_eps_sym / V
+
+    # Central FD over each independent symmetric component (a ≤ b).
+    dh = 1e-4
+    sigma_fd = torch.zeros(3, 3, dtype=torch.float64)
+    for a in range(3):
+        for b in range(a, 3):
+            eps_p = torch.zeros(3, 3, dtype=torch.float64)
+            eps_p[a, b] = dh
+            eps_p[b, a] = dh
+            I_p = eye3 + eps_p
+            I_m = eye3 - eps_p
+
+            E_plus = pot.forward(
+                q=q,
+                pos=pos @ I_p.T,
+                cell=I_p @ cell,
+                mu=mu,
+                Q=Q,
+                kvec_indices=nvec,
+            )["pot"].item()
+            E_minus = pot.forward(
+                q=q,
+                pos=pos @ I_m.T,
+                cell=I_m @ cell,
+                mu=mu,
+                Q=Q,
+                kvec_indices=nvec,
+            )["pot"].item()
+            sigma_fd[a, b] = (E_plus - E_minus) / (2.0 * dh) / V
+            sigma_fd[b, a] = sigma_fd[a, b]
+
+    # Relative error on components meaningfully above noise.
+    mask = sigma_fd.abs() > 1e-6
+    rel = (sigma_auto - sigma_fd).abs() / sigma_fd.abs().clamp(min=1e-12)
+    worst = float(rel[mask].max()) if mask.any() else 0.0
+    assert worst < 1e-5, (
+        f"max relative stress error = {worst:.3e}\nσ_auto = {sigma_auto}\nσ_fd   = {sigma_fd}"
+    )
+
+
+def test_periodic_stress_dynamic_grid_fails_without_freeze() -> None:
+    """Documents *why* the frozen-grid path is required for FD-stress.
+
+    Repeats the above check but uses the production dynamic-grid path
+    (``kvec_indices=None``). FD straddles the discrete ``keep`` flip
+    at the Ewald cutoff and disagrees with autograd by O(0.1)–O(1) on
+    typical small unit cells. We assert that the disagreement is
+    *measurable* — if a future refactor makes the production path
+    smooth, this test should fail and be deleted (the new strict
+    test would already cover the contract).
+    """
+    pos, q, mu, Q, cell = _synthetic_periodic_inputs(seed=1)
+    pot = EwaldMultipoleEnergy(sigma=1.0, dl=2.0, prefactor=PREFACTOR)
+
+    eye3 = torch.eye(3, dtype=torch.float64)
+    strain = torch.zeros(3, 3, dtype=torch.float64, requires_grad=True)
+    sym_eps = 0.5 * (strain + strain.transpose(-1, -2))
+    I_plus = eye3 + sym_eps
+    pos_eps = pos @ I_plus.T
+    cell_eps = I_plus @ cell
+
+    out = pot.forward(q=q, pos=pos_eps, cell=cell_eps, mu=mu, Q=Q)
+    energy = out["pot"]
+    V = float(torch.linalg.det(cell).abs())
+    (stress_eps,) = torch.autograd.grad(energy, strain, create_graph=False)
+    stress_eps_sym = stress_eps + stress_eps.T - torch.diag_embed(torch.diagonal(stress_eps))
+    sigma_auto = stress_eps_sym / V
+
+    dh = 1e-4
+    sigma_fd = torch.zeros(3, 3, dtype=torch.float64)
+    for a in range(3):
+        for b in range(a, 3):
+            eps_p = torch.zeros(3, 3, dtype=torch.float64)
+            eps_p[a, b] = dh
+            eps_p[b, a] = dh
+            I_p = eye3 + eps_p
+            I_m = eye3 - eps_p
+            E_plus = pot.forward(q=q, pos=pos @ I_p.T, cell=I_p @ cell, mu=mu, Q=Q)["pot"].item()
+            E_minus = pot.forward(q=q, pos=pos @ I_m.T, cell=I_m @ cell, mu=mu, Q=Q)["pot"].item()
+            sigma_fd[a, b] = (E_plus - E_minus) / (2.0 * dh) / V
+            sigma_fd[b, a] = sigma_fd[a, b]
+
+    mask = sigma_fd.abs() > 1e-6
+    rel = (sigma_auto - sigma_fd).abs() / sigma_fd.abs().clamp(min=1e-12)
+    worst = float(rel[mask].max()) if mask.any() else 0.0
+    # Negative assertion: documents that the dynamic-grid path is
+    # *not* FD-smooth. If this ever passes ``< 1e-3``, switch to the
+    # strict frozen-grid test above and delete this one.
+    assert worst > 1e-3, (
+        f"dynamic-grid FD-stress agrees within {worst:.3e}; "
+        "production path appears now-smooth — replace this test with "
+        "the strict frozen-grid contract above."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -378,9 +578,7 @@ class TestSO3Equivariance:
         # phi invariant at each atom (atom-by-atom — atoms don't reorder)
         torch.testing.assert_close(ref["phi"], rot["phi"], atol=1e-9, rtol=1e-9)
         # field equivariant: rot.field[i] = R · ref.field[i]
-        torch.testing.assert_close(
-            ref["field"] @ R.T, rot["field"], atol=1e-9, rtol=1e-9
-        )
+        torch.testing.assert_close(ref["field"] @ R.T, rot["field"], atol=1e-9, rtol=1e-9)
 
     def test_reciprocal_full_multipole(self) -> None:
         rng = np.random.default_rng(8)
@@ -411,9 +609,7 @@ class TestSO3Equivariance:
             f"ref={float(ref['pot'])}, rot={float(rot['pot'])}"
         )
         torch.testing.assert_close(ref["phi"], rot["phi"], atol=1e-6, rtol=1e-6)
-        torch.testing.assert_close(
-            ref["field"] @ R.T, rot["field"], atol=1e-6, rtol=1e-6
-        )
+        torch.testing.assert_close(ref["field"] @ R.T, rot["field"], atol=1e-6, rtol=1e-6)
 
     def test_induced_response_equivariance(self) -> None:
         """``q_induced`` invariant; ``u_induced`` equivariant. Realspace path."""
@@ -427,18 +623,12 @@ class TestSO3Equivariance:
 
         ref = pot.forward(q=q, pos=pos, kappa=kappa, alpha=alpha, cell=None)
         R = _random_rotation_matrix(seed=13)
-        rot = pot.forward(
-            q=q, pos=pos @ R.T, kappa=kappa, alpha=alpha, cell=None
-        )
+        rot = pot.forward(q=q, pos=pos @ R.T, kappa=kappa, alpha=alpha, cell=None)
 
         # q_induced = -κ · φ; both κ and φ are scalars, so invariant.
-        torch.testing.assert_close(
-            ref["q_induced"], rot["q_induced"], atol=1e-9, rtol=1e-9
-        )
+        torch.testing.assert_close(ref["q_induced"], rot["q_induced"], atol=1e-9, rtol=1e-9)
         # u_induced = α · E; α scalar, E rotates, so u_induced rotates too.
-        torch.testing.assert_close(
-            ref["u_induced"] @ R.T, rot["u_induced"], atol=1e-9, rtol=1e-9
-        )
+        torch.testing.assert_close(ref["u_induced"] @ R.T, rot["u_induced"], atol=1e-9, rtol=1e-9)
 
 
 # ---------------------------------------------------------------------------
@@ -508,8 +698,14 @@ class TestTorchCompile:
 
         torch.testing.assert_close(eager["pot"], compiled_out["pot"], atol=1e-10, rtol=1e-10)
         torch.testing.assert_close(
-            eager["q_induced"], compiled_out["q_induced"], atol=1e-10, rtol=1e-10,
+            eager["q_induced"],
+            compiled_out["q_induced"],
+            atol=1e-10,
+            rtol=1e-10,
         )
         torch.testing.assert_close(
-            eager["u_induced"], compiled_out["u_induced"], atol=1e-10, rtol=1e-10,
+            eager["u_induced"],
+            compiled_out["u_induced"],
+            atol=1e-10,
+            rtol=1e-10,
         )

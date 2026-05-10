@@ -446,6 +446,7 @@ class EwaldMultipoleEnergy(BasePotential):
         alpha: torch.Tensor | None = None,
         e_ext: torch.Tensor | None = None,
         compute_field: bool = False,
+        kvec_indices: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> dict[str, torch.Tensor]:
         """Compute total LES electrostatic energy + per-atom Φ, E.
@@ -526,7 +527,15 @@ class EwaldMultipoleEnergy(BasePotential):
 
             if use_reciprocal:
                 sub = self._compute_reciprocal(
-                    pos_i, q_i, cell_i, mu_i, Q_i, kappa_i, alpha_i, e_ext
+                    pos_i,
+                    q_i,
+                    cell_i,
+                    mu_i,
+                    Q_i,
+                    kappa_i,
+                    alpha_i,
+                    e_ext,
+                    kvec_indices=kvec_indices,
                 )
             else:
                 sub = self._compute_realspace(pos_i, q_i, mu_i, Q_i, kappa_i, alpha_i, e_ext)
@@ -620,6 +629,54 @@ class EwaldMultipoleEnergy(BasePotential):
 
         return self._apply_induced(pot, e_phi, e_field, kappa, alpha)
 
+    def enumerate_kvec_indices(self, cell: torch.Tensor) -> torch.Tensor:
+        """Enumerate the integer-triplet array used by the reciprocal path.
+
+        Returns the per-cell ``nvec`` ``(M, 3)`` integer triplet array
+        that the production reciprocal path would build for ``cell``,
+        already filtered by ``keep = (k² > 0) & (k² ≤ k_sq_max)``. This
+        is the canonical "frozen k-grid" snapshot a finite-difference
+        validator should pin once on the unperturbed cell and pass back
+        through :meth:`_compute_reciprocal` (via ``kvec_indices``) so
+        that ``E(cell ± dε)`` is evaluated on a *fixed* integer grid —
+        without this, the cutoff ``k² ≤ k_sq_max`` is a step
+        discontinuity in cell strain (boundary k-vectors flicker
+        on/off under FP rounding) and central FD diverges from
+        autograd. Standard PME-stress technique; see LAMMPS
+        ``fix_numdiff_virial`` for the canonical statement of the
+        problem.
+
+        Production callers should leave ``kvec_indices`` at its default
+        (``None``) so the dynamic per-cell enumeration runs; freezing
+        the grid is *only* appropriate for FD validation where the
+        perturbation is small enough that the keep-set is unchanged
+        from the unperturbed cell.
+
+        Args:
+            cell: ``(3, 3)`` lattice vectors.
+
+        Returns:
+            ``(M, 3)`` integer triplet array (cast to the cell's dtype
+            for downstream ``nvec @ G`` matmul).
+        """
+        device = cell.device
+        dtype = cell.dtype
+        twopi = 2.0 * math.pi
+        cell_inv = torch.linalg.inv(cell)
+        G = twopi * cell_inv.T
+        norms = torch.linalg.norm(cell, dim=1)
+        Nk = [max(1, int(norms[i].item() / self.dl)) for i in range(3)]
+        n1 = torch.arange(-Nk[0], Nk[0] + 1, device=device)
+        n2 = torch.arange(-Nk[1], Nk[1] + 1, device=device)
+        n3 = torch.arange(-Nk[2], Nk[2] + 1, device=device)
+        nvec = (
+            torch.stack(torch.meshgrid(n1, n2, n3, indexing="ij"), dim=-1).reshape(-1, 3).to(dtype)
+        )
+        kvec = nvec @ G
+        k_sq = (kvec * kvec).sum(dim=1)
+        keep = (k_sq > 0.0) & (k_sq <= self._k_sq_max)
+        return nvec[keep]
+
     def _compute_reciprocal(
         self,
         pos: torch.Tensor,
@@ -630,35 +687,58 @@ class EwaldMultipoleEnergy(BasePotential):
         kappa: torch.Tensor | None,
         alpha: torch.Tensor | None,
         e_ext: torch.Tensor | None,
+        kvec_indices: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        """3D-periodic reciprocal half-k-sphere path. Mirrors oracle ``brute_reciprocal``."""
+        """3D-periodic reciprocal half-k-sphere path. Mirrors oracle ``brute_reciprocal``.
+
+        Args:
+            kvec_indices: optional ``(M, 3)`` precomputed integer triplet
+                array (typically from :meth:`enumerate_kvec_indices`
+                applied to an unperturbed cell). When supplied, the
+                method skips the dynamic enumeration and ``keep``
+                filter, and instead projects the supplied ``nvec``
+                through ``G(cell)`` directly. This is the canonical
+                FD-stress path: it makes ``E(cell)`` differentiable
+                w.r.t. cell strain near ``cell₀`` because the discrete
+                ``keep`` flip is removed. Production callers must leave
+                this ``None``.
+        """
         device = pos.device
         dtype = pos.dtype
         twopi = 2.0 * math.pi
         sigma_sq_half = self._sigma_sq_half
         prefactor = self.prefactor
-        k_sq_max = self._k_sq_max
 
         volume = torch.linalg.det(cell).abs()
         cell_inv = torch.linalg.inv(cell)
         G = twopi * cell_inv.T
 
-        norms = torch.linalg.norm(cell, dim=1)
-        Nk = [max(1, int(norms[i].item() / self.dl)) for i in range(3)]
-
-        # Build the full integer grid and project to k-space.
-        n1 = torch.arange(-Nk[0], Nk[0] + 1, device=device)
-        n2 = torch.arange(-Nk[1], Nk[1] + 1, device=device)
-        n3 = torch.arange(-Nk[2], Nk[2] + 1, device=device)
-        nvec = (
-            torch.stack(torch.meshgrid(n1, n2, n3, indexing="ij"), dim=-1).reshape(-1, 3).to(dtype)
-        )
-        kvec = nvec @ G  # (M, 3)
-        k_sq = (kvec * kvec).sum(dim=1)
-        keep = (k_sq > 0.0) & (k_sq <= k_sq_max)
-        kvec = kvec[keep]
-        k_sq = k_sq[keep]
-        nvec = nvec[keep]
+        if kvec_indices is None:
+            k_sq_max = self._k_sq_max
+            norms = torch.linalg.norm(cell, dim=1)
+            Nk = [max(1, int(norms[i].item() / self.dl)) for i in range(3)]
+            n1 = torch.arange(-Nk[0], Nk[0] + 1, device=device)
+            n2 = torch.arange(-Nk[1], Nk[1] + 1, device=device)
+            n3 = torch.arange(-Nk[2], Nk[2] + 1, device=device)
+            nvec = (
+                torch.stack(torch.meshgrid(n1, n2, n3, indexing="ij"), dim=-1)
+                .reshape(-1, 3)
+                .to(dtype)
+            )
+            kvec = nvec @ G  # (M, 3)
+            k_sq = (kvec * kvec).sum(dim=1)
+            keep = (k_sq > 0.0) & (k_sq <= k_sq_max)
+            kvec = kvec[keep]
+            k_sq = k_sq[keep]
+            nvec = nvec[keep]
+        else:
+            # Frozen-grid path: project the supplied integer triplet
+            # array through the *current* cell so the kvecs (and the
+            # k_sq weighting kfac = exp(-σ² k²/2) / k²) stay smooth in
+            # cell strain. No discontinuity; FD agrees with autograd.
+            nvec = kvec_indices.to(dtype=dtype, device=device)
+            kvec = nvec @ G
+            k_sq = (kvec * kvec).sum(dim=1)
 
         # Half-k-sphere: keep one of every ±k pair, factor=2 on non-axis.
         non_zero = (nvec != 0).to(torch.long)

@@ -54,7 +54,10 @@ from molpot.potentials.electrostatics.ewald import (
     EwaldMultipoleEnergy,
     EwaldMultipoleEnergySpec,
 )
-from molpot.potentials.polarization import Polarization
+from molpot.potentials.polarization import (
+    Polarization,
+    _set_les_electrostatics_precomputed,
+)
 
 # ---------------------------------------------------------------------------
 # Refusal messages — used by the construction-time scope checks.
@@ -80,16 +83,27 @@ _POLARIZATION_REFUSE_MSG = (
 def _theta_to_cartesian_quadrupole(theta: torch.Tensor) -> torch.Tensor:
     """Convert ``(N, 5)`` ℓ=2 real-spherical components to ``(N, 3, 3)``.
 
-    The result is a symmetric, traceless 3×3 tensor. Maps the orthonormal
-    real-spherical 2e basis (cuequivariance's default ordering ``[m=-2,
-    m=-1, m=0, m=1, m=2]``) onto the orthonormal Cartesian symmetric
-    traceless basis ``M^m`` whose ``trace(M^a · M^b) = δ_{ab}``.
+    The result is a symmetric, traceless 3×3 tensor that is rotation-
+    equivariant with the input under cuequivariance's ``D⁽²⁾`` Wigner
+    matrix: ``M(D⁽²⁾(R) · θ) = R · M(θ) · Rᵀ``.
 
-    The exact normalisation used by cuequivariance's spherical-harmonic
-    convention may differ by a global scalar — Sonata's sub-spec 01 only
-    asserts contract-level shapes, decomposition, and stress symmetry;
-    full numerical parity against the LES oracle is sub-spec 02's
-    deliverable.
+    The cuequivariance ``2e`` real-spherical-harmonic convention
+    (extracted from ``cuequivariance.group_theory.descriptors.
+    spherical_harmonics_.sympy_spherical_harmonics``) maps the five
+    components in ``ir_mul`` layout to these polynomial bases:
+
+    * index 0 (m=-2): ``√15 · xz``
+    * index 1 (m=-1): ``√15 · xy``
+    * index 2 (m=0):  ``(√5/2) · (-x² + 2y² - z²)``
+    * index 3 (m=+1): ``√15 · yz``
+    * index 4 (m=+2): ``(√15/2) · (z² - x²)``
+
+    Note that index 0 is ``xz`` (not ``xy``) and the m=0 diagonal is
+    ``diag(-1, 2, -1)`` (not ``diag(-1, -1, 2)``) — both depart from
+    the older "physics convention" that is wrong for cuequivariance.
+
+    The basis tensors below are orthonormal in the Frobenius inner
+    product (any consistent global scaling preserves the equivariance).
 
     Args:
         theta: ``(N, 5)`` spherical components in cuequivariance's
@@ -102,19 +116,19 @@ def _theta_to_cartesian_quadrupole(theta: torch.Tensor) -> torch.Tensor:
     s6 = 6.0**-0.5
     n = theta.shape[0]
     q = torch.zeros(n, 3, 3, dtype=theta.dtype, device=theta.device)
-    # m = -2: xy off-diagonal
-    q[:, 0, 1] = q[:, 1, 0] = theta[:, 0] * s2
-    # m = -1: yz off-diagonal
-    q[:, 1, 2] = q[:, 2, 1] = theta[:, 1] * s2
-    # m =  0: diag = (-1, -1, 2) / √6
+    # index 0 (m=-2 ↔ xz): xz off-diagonal
+    q[:, 0, 2] = q[:, 2, 0] = theta[:, 0] * s2
+    # index 1 (m=-1 ↔ xy): xy off-diagonal
+    q[:, 0, 1] = q[:, 1, 0] = theta[:, 1] * s2
+    # index 2 (m=0 ↔ -x²+2y²-z²): diag = (-1, 2, -1) / √6
     q[:, 0, 0] = -theta[:, 2] * s6
-    q[:, 1, 1] = -theta[:, 2] * s6
-    q[:, 2, 2] = 2.0 * theta[:, 2] * s6
-    # m = +1: xz off-diagonal
-    q[:, 0, 2] = q[:, 2, 0] = theta[:, 3] * s2
-    # m = +2: diag = (1, -1, 0) / √2  (added on top of m=0 diagonal)
-    q[:, 0, 0] = q[:, 0, 0] + theta[:, 4] * s2
-    q[:, 1, 1] = q[:, 1, 1] - theta[:, 4] * s2
+    q[:, 1, 1] = 2.0 * theta[:, 2] * s6
+    q[:, 2, 2] = -theta[:, 2] * s6
+    # index 3 (m=+1 ↔ yz): yz off-diagonal
+    q[:, 1, 2] = q[:, 2, 1] = theta[:, 3] * s2
+    # index 4 (m=+2 ↔ z²-x²): diag = (-1, 0, 1) / √2  (added on top of m=0)
+    q[:, 0, 0] = q[:, 0, 0] - theta[:, 4] * s2
+    q[:, 2, 2] = q[:, 2, 2] + theta[:, 4] * s2
     return q
 
 
@@ -314,6 +328,7 @@ class Sonata(nn.Module):
         *,
         compute_forces: bool = False,
         compute_stress: bool = False,
+        kvec_indices: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """Run encoder → multipole head → Ewald → optional short-range.
 
@@ -325,6 +340,18 @@ class Sonata(nn.Module):
             compute_stress: Derive stress ``σ = (1/V) ∂U/∂ε`` via a
                 differentiable strain perturbation. Requires
                 ``("graphs", "cell")``.
+            kvec_indices: optional ``(M, 3)`` precomputed integer
+                triplet array forwarded to
+                :meth:`EwaldMultipoleEnergy._compute_reciprocal` to
+                freeze the reciprocal-space integer grid for
+                finite-difference cell/strain validation. **Production
+                callers must leave this ``None``** — the Ewald cutoff
+                ``k² ≤ k_sq_max`` is a step discontinuity in cell
+                strain and freezing the grid is *only* appropriate
+                near a fixed reference cell where the keep-set would
+                not change anyway. See
+                :meth:`EwaldMultipoleEnergy.enumerate_kvec_indices`
+                for the canonical FD-stress technique.
 
         Returns:
             Flat dict with the keys documented in the class docstring.
@@ -399,6 +426,7 @@ class Sonata(nn.Module):
             batch=atom_batch,
             mu=mu,
             Q=Q_cart,
+            kvec_indices=kvec_indices,
         )
         energy_es = ewald_out["pot"]
         if energy_es.dim() == 0:
@@ -471,8 +499,31 @@ class Sonata(nn.Module):
                 strain,
                 create_graph=self.training,
             )[0]
+            # ``stress_eps`` is ``∂E/∂strain[a, b] = ∂E/∂sym_eps[a, b]``
+            # (chain rule through ``sym_eps = (strain + strainᵀ)/2``).
+            # The standard physics convention treats ε as a *symmetric*
+            # tensor with ``ε_αβ = ε_βα`` as a single variable, so
+            # ``σ_αβ = (1/V) ∂E/∂ε_αβ`` counts the (α, β) and (β, α)
+            # components together for off-diagonal: ``σ_αβ = (1/V) ·
+            # 2 · ∂E/∂sym_eps[a, b]`` for ``α ≠ β`` and unchanged for
+            # ``α = β``. Since ``stress_eps`` is symmetric (it inherits
+            # the ``sym_eps`` symmetry through the chain rule),
+            # ``stress_eps + stress_epsᵀ - diag(stress_eps)`` realizes
+            # this convention exactly: doubles off-diagonal, leaves
+            # diagonal unchanged. This matches the FD strain-perturbation
+            # convention ``ε[a, b] = ε[b, a] = dh``.
+            stress_eps_sym = (
+                stress_eps
+                + stress_eps.transpose(-1, -2)
+                - torch.diag_embed(torch.diagonal(stress_eps, dim1=-2, dim2=-1))
+            )
             volume = torch.linalg.det(cell_orig).abs()
-            out["stress"] = stress_eps / volume.unsqueeze(-1).unsqueeze(-1)
+            out["stress"] = stress_eps_sym / volume.unsqueeze(-1).unsqueeze(-1)
+
+        # Surface the double-counting hazard for any subsequent
+        # :class:`molpot.potentials.Polarization` call in this session
+        # (the boundary contract documented in the class docstring).
+        _set_les_electrostatics_precomputed(True)
 
         return out
 
