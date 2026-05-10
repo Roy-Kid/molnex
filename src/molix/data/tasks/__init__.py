@@ -1,9 +1,9 @@
 """Built-in data pipeline tasks."""
 
-from molix.data.tasks.atomic_dress import AtomicDress
-from molix.data.tasks.constant_label import ConstantLabel
-from molix.data.tasks.neighbor_list import NeighborList
-from molix.data.tasks.unit_convert import UnitConvert
+from molix.data.tasks.constant import ConstantLabel
+from molix.data.tasks.dress import AtomicDress
+from molix.data.tasks.neighbor import NeighborList
+from molix.data.tasks.unit import UnitConvert
 
 __all__ = [
     "AtomicDress",

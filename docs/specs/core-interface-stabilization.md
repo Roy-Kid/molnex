@@ -245,7 +245,7 @@ from torch.utils.data import DataLoader
 
 from molix import Trainer
 from molix.data.collate import collate_molecules
-from molix.data.tasks.neighbor_list import NeighborList
+from molix.data.tasks.neighbor import NeighborList
 from molix.datasets.qm9 import QM9Source
 from molpot.composition import LayerPooling, LJParameterHead, PotentialComposer
 from molpot.potentials import LJ126

@@ -4,11 +4,11 @@
 
 ::: molpot.potentials
 
-::: molpot.potentials.lj126
+::: molpot.potentials.vdw.lj126
 
-::: molpot.potentials.bond_harmonic
+::: molpot.potentials.bonds.harmonic
 
-::: molpot.potentials.angle_harmonic
+::: molpot.potentials.angles.harmonic
 
 ::: molpot.potentials.nonbonded
 
@@ -24,9 +24,9 @@
 
 ::: molpot.derivation
 
-::: molpot.derivation.force_derivation
+::: molpot.derivation.force
 
-::: molpot.derivation.stress_derivation
+::: molpot.derivation.stress
 
 ## Pooling and Heads
 

@@ -4,7 +4,7 @@ import pytest
 import torch
 import torch._dynamo
 
-from molrep.readout.product_head import ProductHead
+from molrep.readout.product import ProductHead
 
 
 @pytest.fixture

@@ -40,7 +40,7 @@ import torch
 import torch.nn as nn
 
 from molix.data.types import GraphBatch
-from molrep.embedding.scalar_mlp import ScalarMLPFunction
+from molrep.embedding.mlp import ScalarMLPFunction
 
 
 class EdgeEnergyHead(nn.Module):

@@ -1,11 +1,11 @@
-"""Tests for molrep.interaction.tensor_product module."""
+"""Tests for molrep.interaction.product module."""
 
 import math
 
 import torch
 from tests.utils import assert_module_compiles, assert_module_exports, assert_outputs_close
 
-from molrep.interaction.tensor_product import (
+from molrep.interaction.product import (
     ConvTP,
     ConvTPSpec,
     EquivariantPolynomialTP,

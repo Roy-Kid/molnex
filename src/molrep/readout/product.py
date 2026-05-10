@@ -11,8 +11,8 @@ import torch.nn as nn
 from pydantic import BaseModel, ConfigDict, Field
 
 from molix import config
-from molrep.interaction.symmetric_contraction import SymmetricContraction
-from molrep.readout.basis_projection import BasisProjection
+from molrep.interaction.contraction import SymmetricContraction
+from molrep.readout.projection import BasisProjection
 
 Key = str | tuple[str, ...]
 

@@ -51,8 +51,8 @@ from molix import config
 from molix.data.types import GraphBatch
 from molrep.embedding.angular import SphericalHarmonics
 from molrep.embedding.cutoff import PolynomialCutoff
-from molrep.embedding.scalar_mlp import ScalarMLPFunction
-from molrep.interaction.tensor_product import (
+from molrep.embedding.mlp import ScalarMLPFunction
+from molrep.interaction.product import (
     EquivariantPolynomialTP,
     sh_irreps_from_l_max,
 )

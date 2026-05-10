@@ -1,9 +1,9 @@
-"""Tests for molrep.readout.basis_projection module."""
+"""Tests for molrep.readout.projection module."""
 
 import pytest
 import torch
 
-from molrep.readout.basis_projection import BasisProjection, BasisProjectionSpec
+from molrep.readout.projection import BasisProjection, BasisProjectionSpec
 from tests.utils import assert_compile_compatible
 
 

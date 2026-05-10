@@ -1,11 +1,11 @@
-"""Tests for molrep.interaction.symmetric_contraction module."""
+"""Tests for molrep.interaction.contraction module."""
 
 import pytest
 import torch
 from tests.utils import assert_module_compiles, assert_module_exports, assert_outputs_close
 
 from molix import config
-from molrep.interaction.symmetric_contraction import SymmetricContraction, SymmetricContractionSpec
+from molrep.interaction.contraction import SymmetricContraction, SymmetricContractionSpec
 
 
 class TestSymmetricContractionSpec:

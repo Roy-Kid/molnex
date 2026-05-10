@@ -1,11 +1,11 @@
-"""Tests for molrep.interaction.element_update module."""
+"""Tests for molrep.interaction.element module."""
 
 import pytest
 import torch
 from tests.utils import assert_compile_compatible
 
 from molix import config
-from molrep.interaction.element_update import ElementUpdate, ElementUpdateSpec
+from molrep.interaction.element import ElementUpdate, ElementUpdateSpec
 
 
 class TestElementUpdateSpec:

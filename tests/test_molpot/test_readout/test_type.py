@@ -1,6 +1,6 @@
 import torch
 
-from molpot.heads.heads import TypeHead
+from molpot.heads.type import TypeHead
 from tests.utils import assert_compile_compatible
 
 

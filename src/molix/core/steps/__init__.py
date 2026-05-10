@@ -11,8 +11,8 @@ from typing import Any
 import torch
 
 from molix.core.steps.base import Step
-from molix.core.steps.eval_step import DefaultEvalStep
-from molix.core.steps.train_step import DefaultTrainStep
+from molix.core.steps.eval import DefaultEvalStep
+from molix.core.steps.train import DefaultTrainStep
 
 _NON_MODEL_KEYS = frozenset({"targets", "extras"})
 

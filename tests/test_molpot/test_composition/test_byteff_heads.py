@@ -12,7 +12,7 @@ from molpot.composition.heads import (
     RepulsionParameterHead,
     TSScalingHead,
 )
-from molpot.composition.multi_head import MultiHead
+from molpot.composition.multihead import MultiHead
 
 
 @pytest.fixture

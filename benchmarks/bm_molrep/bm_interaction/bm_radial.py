@@ -1,10 +1,10 @@
-"""Benchmarks for molrep.interaction.radial_mlp.RadialWeightMLP."""
+"""Benchmarks for molrep.interaction.radial.RadialWeightMLP."""
 
 import pytest
 import torch
 import torch._dynamo
 
-from molrep.interaction.radial_mlp import RadialWeightMLP
+from molrep.interaction.radial import RadialWeightMLP
 
 
 class BMRadialWeightMLP:

@@ -3,23 +3,24 @@
 All heads are plain PyTorch modules.
 """
 
-from molpot.heads.edge_energy import EdgeEnergyHead
+from molpot.heads.edge import EdgeEnergyHead
 from molpot.heads.electrostatics import (
     HardnessHead,
     HardnessHeadSpec,
     PolarizabilityHead,
     PolarizabilityHeadSpec,
 )
-from molpot.heads.element_baselines import (
+from molpot.heads.element import (
     ElementAlphaTable,
     ElementChargeTable,
 )
-from molpot.heads.heads import AtomicEnergyMLP, EnergyHead, TypeHead
+from molpot.heads.energy import AtomicEnergyMLP, EnergyHead
 from molpot.heads.multipole import (
     PermMultipoleHead,
     PermMultipoleHeadSpec,
 )
 from molpot.heads.rescale import GlobalRescale, PerSpeciesScaleShift
+from molpot.heads.type import TypeHead
 
 __all__ = [
     "AtomicEnergyMLP",

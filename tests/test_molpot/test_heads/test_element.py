@@ -16,7 +16,7 @@ from __future__ import annotations
 import torch
 
 from molpot.heads import ElementAlphaTable, ElementChargeTable
-from molpot.heads.element_baselines import (
+from molpot.heads.element import (
     ALPHA_DICT_BOHR3,
     DEFAULT_ALPHA_NORM_FACTOR,
     DEFAULT_CHARGE_NORM_FACTOR,

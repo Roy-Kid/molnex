@@ -16,11 +16,11 @@
 
 ::: molrep.interaction
 
-::: molrep.interaction.tensor_product
+::: molrep.interaction.product
 
 ::: molrep.interaction.aggregation
 
-::: molrep.interaction.symmetric_contraction
+::: molrep.interaction.contraction
 
 ## Readout
 
@@ -28,4 +28,4 @@
 
 ::: molrep.readout.pooling
 
-::: molrep.readout.product_head
+::: molrep.readout.product

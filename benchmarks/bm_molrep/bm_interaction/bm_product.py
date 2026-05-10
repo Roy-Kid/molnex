@@ -1,10 +1,10 @@
-"""Benchmarks for molrep.interaction.tensor_product.ConvTP."""
+"""Benchmarks for molrep.interaction.product.ConvTP."""
 
 import pytest
 import torch
 import torch._dynamo
 
-from molrep.interaction.tensor_product import ConvTP, irreps_from_l_max, sh_irreps_from_l_max
+from molrep.interaction.product import ConvTP, irreps_from_l_max, sh_irreps_from_l_max
 
 
 class BMConvTP:

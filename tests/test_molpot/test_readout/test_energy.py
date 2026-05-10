@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from molpot.heads.heads import EnergyHead
+from molpot.heads.energy import EnergyHead
 from tests.utils import assert_compile_compatible
 
 

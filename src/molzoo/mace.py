@@ -48,14 +48,14 @@ from molrep.embedding.node import (
     JointEmbedding,
 )
 from molrep.embedding.radial import BesselRBF
-from molrep.interaction.element_update import ElementUpdate
-from molrep.interaction.radial_mlp import RadialWeightMLP
-from molrep.interaction.tensor_product import (
+from molrep.interaction.element import ElementUpdate
+from molrep.interaction.radial import RadialWeightMLP
+from molrep.interaction.product import (
     ConvTP,
     irreps_from_l_max,
     sh_irreps_from_l_max,
 )
-from molrep.readout.product_head import ProductHead
+from molrep.readout.product import ProductHead
 
 # ===========================================================================
 # Embedding Block

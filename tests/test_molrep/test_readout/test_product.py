@@ -1,10 +1,10 @@
-"""Tests for molrep.readout.product_head module."""
+"""Tests for molrep.readout.product module."""
 
 import pytest
 import torch
 
 from molix import config
-from molrep.readout.product_head import ProductHead, ProductHeadSpec
+from molrep.readout.product import ProductHead, ProductHeadSpec
 from tests.utils import assert_compile_compatible
 
 
