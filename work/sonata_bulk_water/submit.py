@@ -69,7 +69,7 @@ SBATCH_TEMPLATE = string.Template(
 
 set -euo pipefail
 module purge
-module load ${MODULE}
+${MODULE_LOAD}
 source ${VENV}/bin/activate
 
 cd ${REPO_ROOT}
@@ -91,6 +91,13 @@ def _repo_root() -> Path:
 
 def _render(args: argparse.Namespace) -> str:
     """Render SBATCH_TEMPLATE with the parsed CLI args."""
+    # Empty ``--module`` skips ``module load`` entirely. This is the right
+    # path when the activated venv already bundles a self-contained PyTorch
+    # CUDA stack (uv-installed wheels with cuXXX libs) and a system EasyBuild
+    # PyTorch module would only introduce a CUDA-version conflict.
+    module_load = (
+        f"module load {args.module}" if args.module else "# (no module load — venv self-contained)"
+    )
     return SBATCH_TEMPLATE.substitute(
         ACCOUNT=args.account,
         PARTITION=args.partition,
@@ -98,7 +105,7 @@ def _render(args: argparse.Namespace) -> str:
         TIME=args.time,
         JOB_NAME=args.job_name,
         OUT_DIR=str(args.out_dir),
-        MODULE=args.module,
+        MODULE_LOAD=module_load,
         VENV=args.venv,
         REPO_ROOT=str(_repo_root()),
         DATA_ROOT=str(args.data_root),
