@@ -41,10 +41,17 @@ After training, `<out-dir>` holds:
 The driver is the SLURM-submission piece; you still have to lay down a
 Python environment on the login node before the first submission:
 
-1. `module avail PyTorch` — list the EasyBuild modules. Pick one with
-   the CUDA version matching A100s currently in your reservation; pass
-   it via `--module` if the script's default
-   (`PyTorch/2.6.0-foss-2024a-CUDA-12.1.1`) has rolled off the system.
+1. **Pick the module.** Two valid setups:
+   - *Self-contained venv* (uv-installed PyTorch wheels with bundled
+     `nvidia-*` CUDA libs): pass `--module CUDA/12.6.0` (the default).
+     The compute node still needs `libnvrtc.so.12` on its loader path
+     because the molnex C++ extension `libmolnex_opLib.so` links
+     against system CUDA 12; without that load the worker crashes
+     with `OSError: libnvrtc.so.12: cannot open shared object file`.
+   - *EasyBuild PyTorch*: run `module avail PyTorch` to list the
+     current build (e.g. `PyTorch/2.6.0-foss-2024a-CUDA-12.1.1`) and
+     pass it via `--module`. PyTorch's EasyBuild module pulls CUDA
+     in as a dependency, so `CUDA/` does not need a separate load.
 2. `python -m venv $HOME/portfolio/venvs/molnex && \
    source $HOME/portfolio/venvs/molnex/bin/activate && \
    pip install -e .[dev]` from the repo root. Override the venv path

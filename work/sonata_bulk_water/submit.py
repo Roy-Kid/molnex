@@ -38,12 +38,23 @@ from pathlib import Path
 # Defaults the user should review on Alvis login node
 # ---------------------------------------------------------------------------
 
-# The exact PyTorch module name on Alvis drifts as system EasyBuild
-# repos refresh. Run ``module avail PyTorch`` on a login node and override
-# via ``--module`` if this default no longer exists; the placeholder
-# below is the EasyBuild PyTorch + foss-2024a + CUDA-12.x build that
-# was current at spec time.
-DEFAULT_MODULE = "PyTorch/2.6.0-foss-2024a-CUDA-12.1.1"
+# Default module load. Two cases the contributor picks between:
+#
+# (a) **Self-contained venv** (e.g. uv-installed PyTorch wheels with bundled
+#     cuXXX libs). The molnex C++ extension ``libmolnex_opLib.so`` still
+#     links against system ``libnvrtc.so.12``, so the compute node must
+#     expose at least ``CUDA/12.x`` after ``module purge``. ``CUDA/12.6.0``
+#     is the load on Alvis at spec time.
+# (b) **EasyBuild PyTorch** (no venv, or venv is a thin layer on top).
+#     Pass ``--module PyTorch/2.6.0-foss-2024a-CUDA-12.1.1`` (or whatever
+#     ``module avail PyTorch`` lists). PyTorch's EasyBuild module pulls
+#     CUDA in as a dependency, so ``CUDA/`` does not need to be loaded
+#     separately.
+#
+# Pass ``--module ""`` to skip the load entirely (only safe when the
+# venv really is self-contained and the C++ extension was built against
+# a CUDA already on the system loader path).
+DEFAULT_MODULE = "CUDA/12.6.0"
 
 # Virtual-environment directory inside the user's portfolio. Override
 # via ``--venv`` (the user is expected to have created the venv on the
