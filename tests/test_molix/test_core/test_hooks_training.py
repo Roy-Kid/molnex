@@ -5,13 +5,13 @@ import torch
 import torch.nn as nn
 
 from molix.config import set_precision
+from molix.core.state import TrainState
+from molix.core.steps import DefaultTrainStep
+from molix.core.trainer import Trainer
 from molix.hooks import (
     ActivationCheckpointingHook,
     GradClipHook,
 )
-from molix.core.state import TrainState
-from molix.core.steps import DefaultTrainStep
-from molix.core.trainer import Trainer
 
 
 @pytest.fixture(autouse=True)

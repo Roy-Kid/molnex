@@ -61,7 +61,9 @@ def _make_inputs(seed: int, with_mu: bool, with_Q: bool, periodic: bool):
 
 
 @pytest.mark.parametrize("seed", SEEDS)
-@pytest.mark.parametrize("with_mu,with_Q", [(False, False), (True, False), (False, True), (True, True)])
+@pytest.mark.parametrize(
+    "with_mu,with_Q", [(False, False), (True, False), (False, True), (True, True)]
+)
 def test_forward_realspace_parity(
     seed: int,
     with_mu: bool,
@@ -84,16 +86,25 @@ def test_forward_realspace_parity(
     )
 
     torch.testing.assert_close(
-        out["pot"].detach().cpu(), torch.tensor(ref["pot"], dtype=torch.float64),
-        atol=1e-6, rtol=1e-6, msg=f"pot seed={seed} mu={with_mu} Q={with_Q}",
+        out["pot"].detach().cpu(),
+        torch.tensor(ref["pot"], dtype=torch.float64),
+        atol=1e-6,
+        rtol=1e-6,
+        msg=f"pot seed={seed} mu={with_mu} Q={with_Q}",
     )
     torch.testing.assert_close(
-        out["phi"].detach().cpu(), torch.from_numpy(ref["phi"]),
-        atol=1e-6, rtol=1e-6, msg=f"phi seed={seed} mu={with_mu} Q={with_Q}",
+        out["phi"].detach().cpu(),
+        torch.from_numpy(ref["phi"]),
+        atol=1e-6,
+        rtol=1e-6,
+        msg=f"phi seed={seed} mu={with_mu} Q={with_Q}",
     )
     torch.testing.assert_close(
-        out["field"].detach().cpu(), torch.from_numpy(ref["field"]),
-        atol=1e-6, rtol=1e-6, msg=f"field seed={seed} mu={with_mu} Q={with_Q}",
+        out["field"].detach().cpu(),
+        torch.from_numpy(ref["field"]),
+        atol=1e-6,
+        rtol=1e-6,
+        msg=f"field seed={seed} mu={with_mu} Q={with_Q}",
     )
 
 
@@ -117,21 +128,37 @@ def test_forward_reciprocal_parity(
     )
 
     ref = brute_reciprocal(
-        pos, q, cell, mu=mu, Q=Q, sigma=1.0, dl=2.0, prefactor=90.4756,
+        pos,
+        q,
+        cell,
+        mu=mu,
+        Q=Q,
+        sigma=1.0,
+        dl=2.0,
+        prefactor=90.4756,
         remove_self_interaction=True,
     )
 
     torch.testing.assert_close(
-        out["pot"].detach().cpu(), torch.tensor(ref["pot"], dtype=torch.float64),
-        atol=1e-6, rtol=1e-6, msg=f"pot seed={seed} mu={with_mu} Q={with_Q}",
+        out["pot"].detach().cpu(),
+        torch.tensor(ref["pot"], dtype=torch.float64),
+        atol=1e-6,
+        rtol=1e-6,
+        msg=f"pot seed={seed} mu={with_mu} Q={with_Q}",
     )
     torch.testing.assert_close(
-        out["phi"].detach().cpu(), torch.from_numpy(ref["phi"]),
-        atol=1e-6, rtol=1e-6, msg=f"phi seed={seed} mu={with_mu} Q={with_Q}",
+        out["phi"].detach().cpu(),
+        torch.from_numpy(ref["phi"]),
+        atol=1e-6,
+        rtol=1e-6,
+        msg=f"phi seed={seed} mu={with_mu} Q={with_Q}",
     )
     torch.testing.assert_close(
-        out["field"].detach().cpu(), torch.from_numpy(ref["field"]),
-        atol=1e-6, rtol=1e-6, msg=f"field seed={seed} mu={with_mu} Q={with_Q}",
+        out["field"].detach().cpu(),
+        torch.from_numpy(ref["field"]),
+        atol=1e-6,
+        rtol=1e-6,
+        msg=f"field seed={seed} mu={with_mu} Q={with_Q}",
     )
 
 
@@ -158,23 +185,30 @@ def test_forward_induced_response(seed: int) -> None:
         alpha=_to_tensor(alpha),
     )
 
-    ref = brute_realspace(
-        pos, q, mu=mu, sigma=1.0, prefactor=90.4756, remove_self_interaction=True
-    )
+    ref = brute_realspace(pos, q, mu=mu, sigma=1.0, prefactor=90.4756, remove_self_interaction=True)
     ref_q_ind = -kappa * ref["phi"]
     ref_u_ind = alpha[:, None] * ref["field"]
-    ref_pot = ref["pot"] + 0.5 * float(np.dot(ref["phi"], ref_q_ind)) \
-              - 0.5 * float(np.einsum("ic,ic->", ref["field"], ref_u_ind))
+    ref_pot = (
+        ref["pot"]
+        + 0.5 * float(np.dot(ref["phi"], ref_q_ind))
+        - 0.5 * float(np.einsum("ic,ic->", ref["field"], ref_u_ind))
+    )
 
     torch.testing.assert_close(
-        out["pot"].detach().cpu(), torch.tensor(ref_pot, dtype=torch.float64),
-        atol=1e-6, rtol=1e-6,
+        out["pot"].detach().cpu(),
+        torch.tensor(ref_pot, dtype=torch.float64),
+        atol=1e-6,
+        rtol=1e-6,
     )
     torch.testing.assert_close(
-        out["q_induced"].detach().cpu(), torch.from_numpy(ref_q_ind),
-        atol=1e-6, rtol=1e-6,
+        out["q_induced"].detach().cpu(),
+        torch.from_numpy(ref_q_ind),
+        atol=1e-6,
+        rtol=1e-6,
     )
     torch.testing.assert_close(
-        out["u_induced"].detach().cpu(), torch.from_numpy(ref_u_ind),
-        atol=1e-6, rtol=1e-6,
+        out["u_induced"].detach().cpu(),
+        torch.from_numpy(ref_u_ind),
+        atol=1e-6,
+        rtol=1e-6,
     )

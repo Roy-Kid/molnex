@@ -11,11 +11,12 @@ import os
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pytest
 
 
-def _append_scalar(writer: Any, step: int, key: str = "train/loss", value: float | None = None) -> None:
+def _append_scalar(
+    writer: Any, step: int, key: str = "train/loss", value: float | None = None
+) -> None:
     writer.append(
         type="scalar",
         key=key,
@@ -137,8 +138,7 @@ def test_sharding_keeps_file_count_small(tmp_path: Path) -> None:
             files.append(os.path.join(root, f))
 
     assert len(files) <= 50, (
-        f"Sharding regression: 100k records produced {len(files)} files "
-        f"(expected ≤ 50)."
+        f"Sharding regression: 100k records produced {len(files)} files (expected ≤ 50)."
     )
 
 

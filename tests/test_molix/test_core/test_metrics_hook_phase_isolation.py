@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import torch
 
-from molix.hooks import MetricsHook
 from molix.core.metrics import MAE, RMSE
 from molix.core.state import TrainState, display, resolve
+from molix.hooks import MetricsHook
 
 # ---------------------------------------------------------------------------
 # Invariant 1 — TrainState rejects flat slash-prefix writes

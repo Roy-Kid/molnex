@@ -17,9 +17,7 @@ from __future__ import annotations
 import ast
 import inspect
 import pathlib
-from typing import Protocol, get_type_hints
-
-import pytest
+from typing import Protocol
 
 
 def test_module_importable() -> None:

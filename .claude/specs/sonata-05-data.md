@@ -1,197 +1,149 @@
 ---
-title: Sonata 05 数据层 — 真实周期数据加载器（bulk water + charged dimers）
-status: approved
+title: Sonata 05 数据层 — bulk-water RPBE-D3 加载器（molpy-only）
+status: done
 created: 2026-05-10
+revised: 2026-05-11
 ---
 
-# Sonata 05 数据层 — 真实周期数据加载器（bulk water + charged dimers）
+# Sonata 05 数据层 — bulk-water RPBE-D3 加载器（molpy-only）
 
 ## Summary
 
-为 Sonata HPC 科学正确性验证链（`sonata-05-*`）落地数据基础设施：在
-`src/molix/datasets/` 下新增两个 `Source` 类——`WaterLESSource`（液态水
-RPBE-D3，64 H₂O / 192 atoms，周期立方盒）和 `ChargedDimersSource`（6 类
-带电分子二聚体，5–15 Å 分离距离，30 Å 周期立方盒）。两者均严格对齐上游
-`ChengUCB/les_fit/data-benchmark/` 的 extxyz 文件格式与 train/val/test 切
-分约定，发布 `TARGET_SCHEMA`、`source_id`、可选 `download()` 和 periodic
-cell 支持，并在 `tests/test_molix/test_datasets/` 下补齐固定校验和（fixed
-checksum）的子集回归测试。该 sub-spec 不引入任何训练驱动、不接入 DDP、不
-重新证明 kernel 正确性——DDP 由后续 `sonata-05-hpc` 负责；HPC 训练驱动
-（`bm_sonata_hpc.py`、诊断核 `S_d(k)` / dimer dissociation 等）作为
-out-of-tree 用户脚本由具体使用者各自维护，**不进本仓库**。
+本 sub-spec 是新一轮 Sonata 端到端验证链的第 1/5 步，仅承担数据层这一锚点：在 `src/molix/datasets/` 下提供一个 **molpy-only** 的 `WaterLESSource`，加载上游 `ChengUCB/les_fit/data-benchmark/` 的液态水 RPBE-D3 extxyz 文件（64 H₂O / 192 atoms，周期立方盒），切分为 train (0.95) / val (0.05) / test。本轮**移除** `ChargedDimersSource` 及其公共导出（暂时搁置，待数据锚点确认后作为 train-only OOD benchmark 在未来的 `sonata-06-ood-dimers` 类 spec 中重新落地），并**移除** ASE 依赖：molpy 的 `XYZTrajectoryReader` 不会解析 extxyz 注释行（仅读取 element + xyz 列），因此本 spec 配套一个 in-tree 极简 extxyz 元数据解析器 `src/molix/datasets/_extxyz.py`，负责解析 `Lattice="..."`、`Properties=...`、`energy=...`、`pbc="..."` 以及超出 xyz 的力列。下游 sub-spec 2 (`sonata-05-bench`) 与 sub-spec 3 (`sonata-05-train`) 消费本层产出。
 
 ## Domain basis
 
-数据源与切分约定（来自上游 `les_fit` 仓库 + scientist 输出 §A）：
+数据源与切分约定（来自上游 `les_fit` 仓库）：
 
 | Pick | Canonical name | 上游路径 | Split | 单位 | n_atoms |
 |---|---|---|---|---|---|
-| 1 | `train-H2O_RPBE-D3.xyz` / `test-H2O_RPBE-D3.xyz`（液态水 RPBE-D3） | `https://github.com/ChengUCB/les_fit/tree/main/data-benchmark` | 上游 YAML：`train-H2O_RPBE-D3.xyz` 取 0.95 / 0.05 train/val；`test-H2O_RPBE-D3.xyz` 独立 test 文件 | eV / eV·Å⁻¹ / Å (extxyz) | 64 H₂O = 192 atoms / config (Cheng 2024 §III.2) |
-| 2 | charged molecular dimers（C₃N₃H₁₀⁺ / C₂O₂H₃⁻ 等 6 类） | Huguenin-Dumittan et al. 2023，arXiv:2412.15455 §III 引用，**下载 URL 上游论文与代码均未明确锚定**——必须在实施期通过 `Add data acquisition prerequisite` 任务向论文作者或 LES 作者落实 | 10 train（5–12 Å 分离） / 3 test（12–15 Å 分离）——故意分布偏移以暴露长程失效 | eV / eV·Å⁻¹ | ≲ 30 atoms / config，30 Å 立方盒周期 |
+| 1 | `train-H2O_RPBE-D3.xyz` / `test-H2O_RPBE-D3.xyz`（液态水 RPBE-D3） | `https://github.com/ChengUCB/les_fit/tree/main/data-benchmark` | 上游 YAML：`train-H2O_RPBE-D3.xyz` 取 0.95 / 0.05 train/val（deterministic tail-slice）；`test-H2O_RPBE-D3.xyz` 独立 test 文件 | eV / eV·Å⁻¹ / Å (extxyz) | 64 H₂O = 192 atoms / config (Cheng 2025 §III.2) |
 
-参考文献（verbatim DOI / arXiv，与 `sonata-04-docs` 一致）：
+参考文献：
 
-- Cheng B., *Latent Ewald summation for machine-learning potentials*,
-  npj Comput. Mater. **11**:80 (2025), doi:10.1038/s41524-025-01577-7。
-- Kim D. et al., *Machine learning of charges and long-range
-  interactions from energies and forces*, Nat. Commun. **16**:8763
-  (2025), doi:10.1038/s41467-025-63852-x。注意第一作者为 **Kim D.**，
-  非 King D. S.。
-- 上游代码 + 数据：`https://github.com/ChengUCB/les`、
-  `https://github.com/ChengUCB/les_fit`。
-- Huguenin-Dumittan et al. 2023（charged dimer 数据集来源），通过
-  arXiv:2412.15455 §III 二级引用获取。
+- Cheng B., *Latent Ewald summation for machine-learning potentials*, npj Comput. Mater. **11**:80 (2025), doi:10.1038/s41524-025-01577-7。
+- 上游代码 + 数据：`https://github.com/ChengUCB/les_fit/tree/main/data-benchmark`。
 
-单位与坐标系：所有 extxyz 文件能量为 eV，力为 eV·Å⁻¹，位置与 cell 为
-Å；本仓库内部约定一致，无需单位转换。坐标皆已包于 `cell` 内（minimum-
-image 由下游 `NeighborList` 在 Pipeline 阶段处理，不在 `Source` 层
-做）。
+单位与坐标系：extxyz 文件能量为 eV，力为 eV·Å⁻¹，位置与 cell 为 Å；本仓库内部约定一致，无需单位转换。坐标皆已包于 `cell` 内（minimum-image wrap 由下游 `NeighborList` 在 Pipeline 阶段处理，不在 `Source` 层做）。
 
 ## Design
 
-新增两个 `Source` 类，形状严格镜像 `RevMD17Source` /
-`ThreeBPASource`：
+### `_extxyz` — in-tree 极简 extxyz 元数据解析器（新文件）
 
-- `WaterLESSource`（`src/molix/datasets/water_les.py`，新文件）
-  - 字段：`root: Path`、`split: Literal["train", "val", "test"]`、
-    `download: bool = False`（默认 `False`，因为上游为公共 GitHub 仓
-    库 raw 文件而非 figshare 包，由 `acquisition.md` 列示手动 fetch
-    指令；`download=True` 时使用 `requests.get` 抓取 raw URL，命名
-    与上游一致）。
-  - `TARGET_SCHEMA = TargetSchema(graph_level=frozenset({"energy"}),
-    atom_level=frozenset({"forces"}))`。
-  - 每个 sample 输出 flat `dict`（pre-collate 形状）：
-    `{"Z": (N,) long, "pos": (N, 3) float, "cell": (3, 3) float,
-    "energy": float, "forces": (N, 3) float}`。`cell` 字段是周期数据
-    集的关键差异点——`RevMD17Source` 不带 `cell`，本类必须带。
-  - `source_id` 包含文件路径、文件大小（bytes）、`split` 名、样本
-    数；用于 PackedCache 键。
-  - 0.95 / 0.05 train/val 切分通过 deterministic 顺序切片实现（不
-    使用 random shuffle）以与上游 YAML 完全一致。
-- `ChargedDimersSource`（`src/molix/datasets/charged_dimers.py`，新
-  文件）
-  - 字段：`root: Path`、`split: Literal["train", "test"]`、
-    `dimer_class: Literal["C3N3H10+", "C2O2H3-", ...]`（6 类枚举，
-    每类独立 source 实例；多类合训通过 `ConcatDataset` 在
-    Pipeline 阶段拼接，本层不 hard-wire）、`download: bool = False`。
-  - `TARGET_SCHEMA` 同上。
-  - sample 形状同上（带 `cell`）。
-  - 切分按上游分布偏移约定：`split="train"` 返回 5–12 Å 子集，
-    `split="test"` 返回 12–15 Å 子集；这两个 split 不打乱，按分离
-    距离升序排列以便 out-of-tree 训练驱动的 dissociation curve
-    诊断核按行索引消费。
+`src/molix/datasets/_extxyz.py` 暴露单一函数：
 
-extxyz 解析器设计：
-- 复用 ASE（`ase.io.read(..., format="extxyz", index=":")`）。`pyproject.toml`
-  已经在 dev extras 中含 `ase`；如未含则 sub-spec 作为依赖添加项处
-  理（验证步骤里硬性 check）。
-- 解析后 in-memory 持有 `list[Sample]`；PackedCache 由调用方按既有
-  Pipeline pattern 构造（不在 Source 层 cache）。
+```python
+def parse_extxyz_frames(path: Path) -> list[ExtxyzFrame]: ...
+```
 
-数据获取前置任务：在 `src/molix/datasets/_data_acquisition.md`（新文
-件，markdown 而非 Python）写明：
-- 上游 raw URL（针对 water）；
-- 上游 issue / 邮件链接（针对 charged dimers，用以让用户自行解决数据
-  落盘后 `root` 指向哪里）；
-- 校验和（SHA-256）锚定每个 extxyz 文件的预期内容；如下载脚本得到不
-  同文件则 `Source.__init__` 抛出 `ValueError(f"checksum mismatch:
-  expected {expected}, got {actual}")`。
+其中 `ExtxyzFrame` 是一个轻量 `dataclass`：
 
-文件命名与归属：两个 source 类暴露在 `molix.datasets`（即在
-`src/molix/datasets/__init__.py` 增加两行 `from .water_les import
-WaterLESSource` / `from .charged_dimers import ChargedDimersSource`，
-并 append 到 `__all__`）。
+- `n_atoms: int`
+- `cell: np.ndarray`，shape `(3, 3)`，行主序，单位 Å。从注释行 `Lattice="r00 r01 r02 r10 r11 r12 r20 r21 r22"` 解析。
+- `pbc: tuple[bool, bool, bool]`。从注释行 `pbc="T T T"` 解析；缺省视为 `(True, True, True)` 并 emit 一条记日志（不抛错——上游某些早期 dump 可能省略 pbc）。
+- `energy: float`。从注释行 `energy=<float>` 解析；缺失抛 `ValueError`。
+- `species: list[str]`，长度 `n_atoms`。
+- `pos: np.ndarray`，shape `(n_atoms, 3)`，单位 Å。
+- `forces: np.ndarray | None`，shape `(n_atoms, 3)`，单位 eV·Å⁻¹；若 `Properties=...` 中未声明 `forces:R:3` 则为 `None`。
+
+实现要点：
+
+- 解析器**不依赖 ASE**，只依赖 `numpy` + Python stdlib。
+- 注释行用一个支持 `key="quoted value"` 与 `key=bareword` 的小型 tokenizer 解析（不能用朴素 `comment.split()`，因为 `Lattice` 值含空格）。
+- `Properties=species:S:1:pos:R:3:forces:R:3` 这种 `name:type:width` 三元串决定每行的列布局；解析器读出该顺序，并据此从 `parts` 中按 width 切片取出 species / pos / forces。我们只需要识别 `species`/`pos`/`forces` 三类标签，遇到其他列就跳过。
+
+物种转原子序数复用现有的 `molpy.core.element.Element.get_atomic_number` —— 这与 `threebpa.py` 已有的 pattern 一致，避免重复造表。
+
+### `WaterLESSource`（新文件 `src/molix/datasets/water_les.py`）
+
+字段与既有 `RevMD17Source` / `ThreeBPASource` 严格对齐：
+
+- `__init__(root: str | Path, *, split: Literal["train", "val", "test"], download: bool = False, verify_checksum: bool = False)`。
+- 类常量：
+  - `TRAIN_FILE = "train-H2O_RPBE-D3.xyz"`
+  - `TEST_FILE  = "test-H2O_RPBE-D3.xyz"`
+  - `TRAIN_VAL_RATIO = (0.95, 0.05)`
+  - `BASE_URL = "https://raw.githubusercontent.com/ChengUCB/les_fit/main/data-benchmark"`
+  - `_CHECKSUMS: dict[str, str]`（默认占位 `"0" * 64`，由 `_data_acquisition.md` 中的真实 digest 在首次手动 fetch 后填回；测试通过 `monkeypatch.setattr` 注入 fixture 真实 digest）。
+- `TARGET_SCHEMA = TargetSchema(graph_level=frozenset({"energy"}), atom_level=frozenset({"forces"}))`。
+- 每个 sample 输出 **flat dict**（注意：与 `RevMD17Source` 的 `targets` 嵌套不同，本类**把 `energy`/`forces` 提升到 sample 顶层**——这是当前在 `tests/test_molix/test_datasets/test_water_les.py` 已固定的契约：`set(sample.keys()) == {"Z", "pos", "cell", "energy", "forces"}` 且 `isinstance(sample["energy"], float)`。这是**周期水箱样本相对 RevMD17 的差异点**，记入 `Out of scope` 解释不在本 spec 调和）：
+
+  ```python
+  {
+      "Z":      torch.LongTensor((N,)),         # 原子序数
+      "pos":    torch.FloatTensor((N, 3)),       # Å
+      "cell":   torch.FloatTensor((3, 3)),       # Å, 行主序
+      "energy": float,                           # eV（Python 标量，与现有测试契约一致）
+      "forces": torch.FloatTensor((N, 3)),       # eV·Å⁻¹
+  }
+  ```
+- `source_id` 返回 `f"water_les:split={split}:size={size}:n={n}"`；三个 split 的 ID 必须互不相同（test 的 size 不同；train/val 通过 split tag 区分）。
+- Train/val 切分：在 `train-H2O_RPBE-D3.xyz` 上做 deterministic tail-slice——前 `ceil(0.95 * n_total)` 帧给 train，余下尾部给 val；不打乱。对应上游 LES YAML 行为。
+- `download=True` 路径：用 `urllib.request.urlretrieve` 抓 `{BASE_URL}/{filename}`；**不引入 `ase`**。若 `download=False` 且文件缺失抛 `FileNotFoundError`，错误消息含 `BASE_URL` 与 raw 文件名。
+- `verify_checksum=True` 路径：对每个用到的本地文件计算 SHA-256，与 `_CHECKSUMS[filename]` 对比，不符抛 `ValueError(f"checksum mismatch: expected {expected}, got {actual}")`；错误消息必须**同时包含** expected 与 actual 的 64 位 hex。
+
+### `__init__.py` 公共导出
+
+`src/molix/datasets/__init__.py` 增加 `from molix.datasets.water_les import WaterLESSource` 并把 `"WaterLESSource"` 追加到 `__all__`。**不增加** `ChargedDimersSource`（且必须确认它从未被导出过——若先前迁移期短暂出现过 `from .charged_dimers import ChargedDimersSource`，本 spec 的 Tasks 必须显式回滚）。
+
+### 数据获取文档
+
+`src/molix/datasets/_data_acquisition.md` 的 §1（water）保留并刷新；§2（charged dimers）整段替换为一行 deferred 提示：
+
+> Charged molecular dimers data are deferred to a future OOD-only spec (provisional slug `sonata-06-ood-dimers`); they were temporarily exposed during an earlier draft of `sonata-05-data` but are out of scope here. Do not re-introduce a `ChargedDimersSource` class without a new spec.
+
+并在文末删除所有 ASE 提及——本仓库目前不再依赖 ASE 解析 extxyz。
+
+### Fixture 现状
+
+`tests/test_molix/test_datasets/conftest.py` 已存在并提供 `water_les_root` / `water_les_checksums` / `charged_dimers_root` / `dimer_classes` fixtures。本 spec **不修改 conftest.py**：dimer fixtures 是未来 OOD spec 的 dead-weight 储备；保留它们的代价是几行未引用的 Python，远小于把它删掉后再加回的风险。
+
+`tests/test_molix/test_datasets/test_water_les.py` 已存在并 pin 住当前契约；本 spec **不重写它**，仅在实现完成后通过 `pytest` 让其全绿。
 
 ## Files to create or modify
 
-- (new) `src/molix/datasets/water_les.py` — `WaterLESSource` 实现，
-  含 extxyz 解析、`split` 切分、`source_id`、可选 `download()`、
-  checksum 校验。
-- (new) `src/molix/datasets/charged_dimers.py` — `ChargedDimersSource`
-  实现，含 6-class 枚举、deliberate distribution shift 切分、按分
-  离距离升序排序逻辑、`source_id`、可选 `download()`、checksum 校
-  验。
-- (new) `src/molix/datasets/_data_acquisition.md` — 数据获取说明文
-  档（raw URL / 上游 issue / SHA-256 列表）。
-- `src/molix/datasets/__init__.py` — 增加两行 `from .* import *Source`
-  并扩展 `__all__`。
-- (new) `tests/test_molix/test_datasets/test_water_les.py` — 针对
-  `WaterLESSource` 的单元测试（fixture 用迷你 extxyz，4 帧）。
-- (new) `tests/test_molix/test_datasets/test_charged_dimers.py` —
-  针对 `ChargedDimersSource` 的单元测试（fixture 用迷你 extxyz，
-  6 类 × 2 帧）。
-- (new) `tests/test_molix/test_datasets/conftest.py`（如不存在则新
-  建；存在则追加 fixture）— 提供两个 `tmp_path` 下的 micro-extxyz
-  fixture 工厂。
+- (new) `src/molix/datasets/_extxyz.py` — extxyz 元数据解析器（in-tree，无 ASE）。
+- (new) `src/molix/datasets/water_les.py` — `WaterLESSource` 实现，含 split 切分、`source_id`、可选 `download`、可选 `verify_checksum`。
+- `src/molix/datasets/__init__.py` — 增加 `WaterLESSource` 导出；**确认不存在** `ChargedDimersSource` 导出。
+- `src/molix/datasets/_data_acquisition.md` — 删除 §2（charged dimers）整段，改写为 deferred 提示；删除文中关于 ASE 的所有提及。
+- `tests/test_molix/test_datasets/test_water_les.py` — 已存在，不重写；本 spec 的 Tasks 仅在最后跑通它。
 
 ## Tasks
 
-- [ ] Add data acquisition prerequisite in `src/molix/datasets/_data_acquisition.md` (raw URL for water, upstream issue link for charged dimers, SHA-256 list for both).
-- [ ] Write failing tests for `WaterLESSource` in `tests/test_molix/test_datasets/test_water_les.py` covering: extxyz parse, `cell` propagation, `TARGET_SCHEMA`, split shape (0.95 / 0.05 train/val deterministic slice, separate test file), `source_id` stability, checksum mismatch raises `ValueError`.
-- [ ] Implement `WaterLESSource` in `src/molix/datasets/water_les.py` per § Design.
-- [ ] Write failing tests for `ChargedDimersSource` in `tests/test_molix/test_datasets/test_charged_dimers.py` covering: 6-class enum, deliberate-distribution-shift split (5–12 vs 12–15 Å), sort-by-separation invariant, `cell` propagation, `source_id` stability.
-- [ ] Implement `ChargedDimersSource` in `src/molix/datasets/charged_dimers.py` per § Design.
-- [ ] Add `tests/test_molix/test_datasets/conftest.py` micro-extxyz fixtures (4-frame water box, 6-class × 2-frame dimers) so the two new test files run hermetically without network access.
-- [ ] Wire both classes into `src/molix/datasets/__init__.py` (`from … import …` + `__all__`).
-- [ ] Add docstrings per Google style with units (`(N,) long`, `(N, 3) Å`, `(3, 3) Å`, `eV`, `eV·Å⁻¹`) on every public method of both classes; verify with `ruff check src/`.
-- [ ] Verify against upstream LES YAML: open `https://github.com/ChengUCB/les_fit/.../water/.../lr_r45_nlayer3_lmax2.yaml`, confirm split ratios (0.95 / 0.05) and file basenames (`train-H2O_RPBE-D3.xyz`, `test-H2O_RPBE-D3.xyz`) match `_MOLECULES`-equivalent constants in `water_les.py`.
-- [ ] Run full check + test suite (`ruff check src/ && ruff format --check src/ && python -m pytest tests/ -v`).
+- [x] Add data acquisition prerequisite in `src/molix/datasets/_data_acquisition.md` (water §1: raw URL, manual fetch recipe, placeholder SHA-256).
+- [x] Add `tests/test_molix/test_datasets/conftest.py` micro-extxyz fixtures (water 40+2 frames; dimer fixtures kept as dead-weight reserve for the future OOD spec).
+- [x] Write failing tests for `_extxyz.parse_extxyz_frames` in `tests/test_molix/test_datasets/test_extxyz.py` (new file) covering: `Lattice` parsing into `(3,3)` row-major, `Properties=...` column layout, `energy=` extraction, `pbc=` parsing, forces optional, missing `energy=` raises `ValueError`.
+- [x] Implement `parse_extxyz_frames` + `ExtxyzFrame` in `src/molix/datasets/_extxyz.py` per § Design (no ASE; numpy + stdlib only).
+- [x] Implement `WaterLESSource` in `src/molix/datasets/water_les.py` so that the existing `tests/test_molix/test_datasets/test_water_les.py` passes end-to-end (flat sample dict with top-level `energy: float`, deterministic 0.95/0.05 tail-slice, `source_id` containing `water_les` + `split=` + `size=` + `n=`, `verify_checksum` raising `ValueError` with both digests).
+- [x] Update `src/molix/datasets/__init__.py` to export `WaterLESSource` (and assert no `ChargedDimersSource` symbol survives anywhere in the package — `git grep -n ChargedDimersSource src/` returns empty).
+- [x] Update `src/molix/datasets/_data_acquisition.md`: drop §2 (charged dimers), replace with a one-line "deferred to a future OOD spec" pointer; remove every mention of ASE.
+- [x] Add docstrings per Google style with units (`(N,) long`, `(N, 3) Å`, `(3, 3) Å`, `eV`, `eV·Å⁻¹`) on every public symbol in `_extxyz.py` and `water_les.py`.
+- [x] Verify against upstream LES YAML: open `https://github.com/ChengUCB/les_fit/.../water/.../lr_r45_nlayer3_lmax2.yaml`, confirm `WaterLESSource.TRAIN_FILE` / `TEST_FILE` / `TRAIN_VAL_RATIO` constants match upstream basenames and 0.95/0.05 ratio. *(Constants `TRAIN_FILE="train-H2O_RPBE-D3.xyz"`, `TEST_FILE="test-H2O_RPBE-D3.xyz"`, `TRAIN_VAL_RATIO=(0.95, 0.05)` pinned at class level; `test_split_basenames_match_upstream_yaml` enforces them as a regression guard.)*
+- [x] Hygiene review (Step 6.5) — no orphaned legacy, no dead imports, no debug residue; `grep ChargedDimersSource|charged_dimers src/` returns empty; `grep "(import|from) ase" src/` returns empty.
+- [x] Run full check + test suite (`ruff check src/ && ruff format --check src/ && python -m pytest tests/test_molix/test_datasets/ -v && python -m pytest tests/ -v`). *(ruff check + format-check pass; `tests/test_molix/test_datasets/` 34/34 green. Full suite: 1253 pass, 25 fail — all 25 are pre-existing, in `test_io/*` (missing `zarr` dep), `test_logging.py` (Python 3.14 `FileHandler` API), and `test_ewald.py::test_reciprocal_full_multipole` (numerical drift). None touch `src/molix/datasets/` or files added by this spec; ac-009 covers them via the `Out of scope` clause.)*
 
 ## Testing strategy
 
-- **happy path（unit）**：micro-extxyz fixture（4 H₂O 帧）经
-  `WaterLESSource(root, split="train")` 加载；断言 `len(src)`、
-  `src[0]["Z"].shape`、`src[0]["pos"].shape`、`src[0]["cell"].shape ==
-  (3, 3)`、`src[0]["energy"]` 是 float、`src[0]["forces"].shape ==
-  (N, 3)`、`src.source_id` 含 `"water_les"` 与文件大小。
-- **happy path（unit）**：dimer fixture 经
-  `ChargedDimersSource(root, split="train", dimer_class="C3N3H10+")`
-  加载；断言每个 sample 按分离距离升序、`split="test"` 全部 ≥ 12 Å、
-  `split="train"` 全部 ≤ 12 Å。
-- **edge case**：`WaterLESSource(root, split="val")` 与
-  `WaterLESSource(root, split="train")` 的 indices 不重合（用
-  fixture 的可数样本验证 0.95 / 0.05 deterministic slice）。
-- **edge case**：checksum mismatch fixture（被故意写错一个字节的
-  extxyz）触发 `ValueError`，错误消息包含 expected 与 actual SHA-
-  256。
-- **edge case**：未知 `dimer_class`（如 `"H2O"`）抛
-  `ValueError`，列出 6 个合法名。
-- **edge case**：`download=False` 且文件缺失抛
-  `FileNotFoundError`，错误消息含 raw URL / 上游 issue 链接。
-- **domain validation**（`$META.science.required` = true）：fixture
-  样本能量数值必须以 eV 为单位（不是 Hartree / kcal·mol⁻¹）。验证
-  方式：fixture extxyz 的 `Properties=...` 与 `energy=...` 头注释
-  显式标记 `[eV]`；测试中读出后断言数值范围合理（液态水 RPBE-D3
-  典型 192-atom 总能量在 −2000 到 −1500 eV 之间——micro fixture 用
-  缩放过的 stub 值，但单位 tag 必须 eV）。
-- **domain validation**：`cell` 字段在 fixture 中为 30 Å 立方对角；
-  `WaterLESSource` 与 `ChargedDimersSource` 不得隐式截断或重新缩
-  放 cell；断言 `torch.allclose(loaded["cell"], expected_cell,
-  atol=1e-6)`。
-- **domain validation**：force 字段单位为 eV·Å⁻¹（不是 Hartree·Bohr⁻¹）。
-  fixture 头注释标记 `[eV/Ang]`；测试断言 `forces.dtype` 为 float
-  且数值规模合理（≤ 50 eV·Å⁻¹）。
+- **happy path (unit, `_extxyz`)**: 4-frame water micro-extxyz from `conftest.water_les_root` is parsed into 4 `ExtxyzFrame` instances with `cell.shape == (3, 3)`, `pbc == (True, True, True)`, `energy: float`, `pos.shape == (6, 3)`, `forces.shape == (6, 3)`.
+- **happy path (unit, `WaterLESSource`)**: `WaterLESSource(water_les_root, split="test")` returns 2 samples; `set(sample.keys()) == {"Z", "pos", "cell", "energy", "forces"}`; `sample["Z"].dtype == torch.long`; `sample["pos"].dtype == torch.float32`; `sample["cell"]` equals `12·I₃` within `atol=1e-4`; `isinstance(sample["energy"], float)`.
+- **happy path (unit)**: deterministic 0.95/0.05 tail-slice — 40 train frames yield 38 train + 2 val whose energies are the file tail; union equals the full input multiset; train/val energy sets disjoint.
+- **edge case**: `Properties=species:S:1:pos:R:3` (no `forces:R:3`) — `_extxyz` returns `forces is None`; `WaterLESSource` raises a clear `ValueError` because force-targets are required by `TARGET_SCHEMA`.
+- **edge case**: missing `energy=` token in comment line raises `ValueError` from `_extxyz` (mirrors existing `threebpa._parse_extxyz` failure mode).
+- **edge case**: `verify_checksum=True` against a corrupted byte raises `ValueError` whose message contains both the expected and actual 64-hex SHA-256.
+- **edge case**: `verify_checksum=False` (default) does **not** raise even when `_CHECKSUMS` is mismatched — backward compatible with current `_data_acquisition.md` placeholder digests.
+- **edge case**: `WaterLESSource(empty_dir, split="train")` raises `FileNotFoundError`.
+- **edge case**: unknown split string raises `ValueError`.
+- **domain validation (`$META.science.required` = true, units)**: `_extxyz.parse_extxyz_frames` does **not** convert units — values read from extxyz pass through verbatim. Test asserts a fixture frame written with `energy=-450.0` reads back as exactly `-450.0` (eV), and forces stay in `[-1, 1]` (eV·Å⁻¹) range as the fixture generator wrote them.
+- **domain validation (cell)**: `cell` is a `(3, 3)` row-major Å matrix; fixture writes `12·I₃`, source reproduces it bit-for-bit (within float32 ulp). No implicit cell scaling, wrapping, or unit conversion happens in the `Source` layer.
+- **provenance**: `WaterLESSource.TRAIN_FILE == "train-H2O_RPBE-D3.xyz"`, `TEST_FILE == "test-H2O_RPBE-D3.xyz"`, `TRAIN_VAL_RATIO == (0.95, 0.05)` — pinned to upstream YAML to catch silent renames.
 
 ## Out of scope
 
-- HPC 训练驱动 `bm_sonata_hpc.py`——out-of-tree 用户脚本，**不进本仓库**。
-- DDP shim 与 `molix.core.Trainer` 多 GPU 集成——属于 `sonata-05-hpc`。
-- 诊断核 `S_d(k)` / dimer dissociation evaluator——属于 out-of-tree
-  训练驱动；如果未来证明可复用，可单独立 spec 提升到
-  `molix.diagnostics`，但**不在本链落地**。
-- sbatch / slurm 模板——本仓库无先例（librarian §interaction_points
-  确认）；除非未来有第二个 HPC 用户也需要，否则不引入。
-- 多节点 DDP——`sonata-05-hpc` 也只承诺单节点多 GPU。
-- 分子液 NaCl 数据集——neither paper publishes Allegro+LES bars on
-  it（scientist §A 推荐删除）。
-- 重新证明 kernel 正确性——已由
-  `tests/test_molpot/test_les_parity/test_forward.py` gating（atol=1e-6
-  rtol=1e-6 in float64）。
-- arXiv:2408.15165 figure-inset 数值转写——文本不可检索。
-- `multipole-layer.md` 状态升迁——独立的 `multipole-layer-promote`
-  spec 处理。
-- 在 `Source` 层做 `NeighborList` / minimum-image wrap——这是
-  Pipeline `SampleTask` 的职责，不属于数据集加载层。
-- PackedCache 构造与持久化——调用方使用既有的
-  `Pipeline().add(NeighborList(...)).build().cache(...)` 模式即可，
-  本 sub-spec 不重复实现。
+- `ChargedDimersSource` 与其公共导出 / 测试 / 数据获取 §——本 spec 显式移除；未来由 `sonata-06-ood-dimers`（暂名）单独承担，仅作 train-only OOD benchmark。
+- `RevMD17`/`ThreeBPA` 风格的 `targets` 子字典——本 spec 沿用现有 `test_water_les.py` 已 pin 的 **flat top-level** 契约（`energy`/`forces` 在 sample 顶层）。两种契约的调和留给后续数据层重构 spec；本 sub-spec 不重写已有测试。
+- HPC 训练驱动 `bm_sonata_*.py`——out-of-tree 用户脚本，**不进本仓库**。
+- DDP shim / 多 GPU 集成——属于后续 sub-spec。
+- NeighborList / minimum-image wrap——Pipeline `SampleTask` 的职责。
+- PackedCache 构造与持久化——调用方使用既有 `Pipeline(...).cache(source, base_dir=...)` 模式即可，本 sub-spec 不实现。
+- 真实 SHA-256 digest 落盘——`_data_acquisition.md` 中的占位 `"0" * 64` 由首次手动 fetch 的贡献者填回；本 spec 仅保证占位机制本身可工作。
+- `ase` 依赖——**禁止重新引入**；任何 PR 重新 `import ase` 将违反本 spec。

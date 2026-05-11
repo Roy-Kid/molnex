@@ -253,7 +253,15 @@ class EwaldMultipoleEnergy(BasePotential):
         # Derived constants.
         self._a = 1.0 / (cfg.sigma * (2.0**0.5))  # = 1/(σ√2)
         self._sigma_sq_half = cfg.sigma * cfg.sigma / 2.0  # σ²/2
-        self._k_sq_max = (2.0 * torch.pi / cfg.dl) ** 2  # k-space cutoff
+        # k-space cutoff with a tiny relative tolerance: bare `k² ≤ k_max²`
+        # introduces a step discontinuity exactly at the boundary; under
+        # cell rotation the rounded `nvec @ G @ R.T` lookup of k² flips a
+        # few boundary k-vectors on/off relative to the unrotated cell,
+        # which breaks SO(3) equivariance of the reciprocal sum and
+        # FD-stress smoothness. A 1e-10 relative widening keeps the
+        # boundary set deterministically inclusive without altering
+        # practical cutoff behavior.
+        self._k_sq_max = (2.0 * torch.pi / cfg.dl) ** 2 * (1.0 + 1.0e-10)
         # ``norm_const = prefactor / (2π)`` is the ``1/(4πε₀)`` factor used
         # in the bare per-pair real-space kernels (since
         # ``prefactor = 1/(2ε₀) = 2π · 1/(4πε₀)``). Reciprocal sums use

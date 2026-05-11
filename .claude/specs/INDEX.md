@@ -7,5 +7,9 @@ once ratified, they are the authoritative description of a feature.
 |------|-------|--------|-------------|---------|
 | [multipole-layer](multipole-layer.md) | Direct permanent multipole layer over Allegro (`molpot.heads.PermMultipoleHead`) | draft | `mn-impl` | 2026-04-25 |
 | [sonata-04-docs](sonata-04-docs.md) | Sonata boundary documentation + design doc (chain 4/4) | approved | `mol:impl` | 2026-05-10 |
-| [sonata-05-data](sonata-05-data.md) | Real bulk-water + charged-dimer Source classes for HPC validation (chain 5/2·1) | approved | `mol:impl` | 2026-05-10 |
-| [sonata-05-hpc](sonata-05-hpc.md) | First-class DDP wrap shim for `molix.core.Trainer` — single-node multi-GPU (chain 5/2·2) | approved | `mol:impl` | 2026-05-10 |
+| [sonata-05-data](sonata-05-data.md) | Bulk-water RPBE-D3 molpy-only loader (chain 5/5·1; supersedes 2026-05-10 ASE+dimer draft) | approved | `mol:impl` | 2026-05-10 |
+| [sonata-05-hpc](sonata-05-hpc.md) | First-class DDP wrap shim for `molix.core.Trainer` — single-node multi-GPU | approved | `mol:impl` | 2026-05-10 |
+| [sonata-05-bench](sonata-05-bench.md) | In-tree `BenchManifest` schema + `model_from_manifest` factory + `runs/` layout (chain 5/5·2) | approved | `mol:impl` | 2026-05-11 |
+| [sonata-05-train](sonata-05-train.md) | Manifest-driven train driver (Allegro baseline + Sonata) + `MultipoleDiagnosticHook` (chain 5/5·3) | approved | `mol:impl` | 2026-05-11 |
+| [sonata-05-md](sonata-05-md.md) | In-tree `molix.md` — Velocity-Verlet NVE/NVT + Langevin BAOAB + `run_md_stage` (chain 5/5·4) | approved | `mol:impl` | 2026-05-11 |
+| [sonata-05-obs](sonata-05-obs.md) | `molix.observables` — periodic-MIC RDF + dipole-dipole ACF + multipole-stability (chain 5/5·5) | approved | `mol:impl` | 2026-05-11 |

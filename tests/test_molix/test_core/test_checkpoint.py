@@ -16,9 +16,9 @@ from molix.core.checkpoint import (
     capture_rng_states,
     restore_rng_states,
 )
-from molix.hooks import CheckpointHook
 from molix.core.state import TrainState
 from molix.core.trainer import Trainer
+from molix.hooks import CheckpointHook
 
 
 @pytest.fixture(autouse=True)

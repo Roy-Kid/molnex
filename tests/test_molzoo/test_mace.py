@@ -12,11 +12,11 @@ from molrep.embedding.angular import SphericalHarmonics
 from molrep.embedding.cutoff import CosineCutoff
 from molrep.embedding.node import DiscreteEmbeddingSpec, JointEmbedding
 from molrep.embedding.radial import BesselRBF
-from molrep.interaction.radial import RadialWeightMLP
 from molrep.interaction.contraction import SymmetricContraction
 from molrep.interaction.product import ConvTP
-from molrep.readout.projection import BasisProjection
+from molrep.interaction.radial import RadialWeightMLP
 from molrep.readout.product import ProductHead
+from molrep.readout.projection import BasisProjection
 from molrep.utils.equivariance import (
     random_rotation_matrix,
     rotate_vectors,

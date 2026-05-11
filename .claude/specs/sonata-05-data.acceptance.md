@@ -2,109 +2,139 @@
 slug: sonata-05-data
 criteria:
   - id: ac-001
-    summary: WaterLESSource parses extxyz and propagates periodic cell
+    summary: WaterLESSource parses extxyz and exposes the periodic cell
     type: code
     pass_when: |
-      `pytest tests/test_molix/test_datasets/test_water_les.py::test_parse_and_cell -v`
-      passes; loaded sample has keys {"Z", "pos", "cell", "energy",
-      "forces"}, `cell.shape == (3, 3)`, and `pos`/`forces` are
-      float32 with shape `(N, 3)` for N == 192 (or fixture-scaled).
-    status: pending
+      `pytest tests/test_molix/test_datasets/test_water_les.py::TestWaterLESParse::test_parse_and_cell -v`
+      passes: sample dict has keys `{Z, pos, cell, energy, forces}`, `cell.shape == (3, 3)`
+      and equals `12·I₃` within atol=1e-4, `energy` is a Python `float`,
+      `Z.dtype == torch.long`, `pos.dtype == torch.float32`.
+    status: verified
+    last_checked: 2026-05-11
   - id: ac-002
-    summary: WaterLESSource split is deterministic and matches upstream YAML
+    summary: WaterLESSource splits 0.95/0.05 deterministically from train-…xyz
     type: code
     pass_when: |
-      `pytest tests/test_molix/test_datasets/test_water_les.py::test_split_deterministic -v`
-      passes; train/val ratio is 0.95/0.05 by deterministic slice
-      (no shuffle); `train-H2O_RPBE-D3.xyz` and
-      `test-H2O_RPBE-D3.xyz` map to disjoint splits matching the
-      upstream YAML basenames in `les_fit`.
-    status: pending
+      `pytest tests/test_molix/test_datasets/test_water_les.py::TestWaterLESSplit -v`
+      passes: with 40-frame fixture, train has 38 samples, val has 2,
+      val energies equal the last two energies in the input file,
+      train ∩ val (by energy) is empty,
+      and `WaterLESSource.TRAIN_FILE` / `TEST_FILE` / `TRAIN_VAL_RATIO` match
+      `train-H2O_RPBE-D3.xyz` / `test-H2O_RPBE-D3.xyz` / `(0.95, 0.05)`.
+    status: verified
+    last_checked: 2026-05-11
   - id: ac-003
-    summary: WaterLESSource raises on checksum mismatch
+    summary: verify_checksum=True raises ValueError naming both digests
     type: code
     pass_when: |
-      `pytest tests/test_molix/test_datasets/test_water_les.py::test_checksum_mismatch -v`
-      passes; a corrupted-byte fixture triggers `ValueError` whose
-      message contains both expected and actual SHA-256.
-    status: pending
+      `pytest tests/test_molix/test_datasets/test_water_les.py::TestWaterLESChecksum -v`
+      passes: corrupted byte triggers `ValueError(match="checksum mismatch")`,
+      message contains two distinct 64-hex SHA-256 strings, and the default
+      `verify_checksum=False` constructor succeeds even when `_CHECKSUMS` is mismatched.
+    status: verified
+    last_checked: 2026-05-11
   - id: ac-004
-    summary: ChargedDimersSource enforces distribution-shift split
+    summary: source_id is deterministic and split-distinguishing
     type: code
     pass_when: |
-      `pytest tests/test_molix/test_datasets/test_charged_dimers.py::test_distribution_shift -v`
-      passes; for any of the 6 dimer classes, every `split="train"`
-      sample has nearest inter-fragment separation ≤ 12 Å, every
-      `split="test"` sample has separation ≥ 12 Å, and samples
-      within a split are sorted by ascending separation.
-    status: pending
+      `pytest tests/test_molix/test_datasets/test_water_les.py::TestWaterLESSourceID -v`
+      passes: repeated `source_id` reads are equal, contain `water_les`,
+      `split=<split>`, `size=<bytes>`, and `n=<len>`, and the three splits
+      (`train`/`val`/`test`) yield three distinct `source_id` strings.
+    status: verified
+    last_checked: 2026-05-11
   - id: ac-005
-    summary: ChargedDimersSource validates dimer_class enum
+    summary: TARGET_SCHEMA exposes graph={energy} + atom={forces}
     type: code
     pass_when: |
-      `pytest tests/test_molix/test_datasets/test_charged_dimers.py::test_unknown_class -v`
-      passes; `ChargedDimersSource(..., dimer_class="H2O")` raises
-      `ValueError` listing all 6 legal names.
-    status: pending
+      `pytest tests/test_molix/test_datasets/test_water_les.py::TestWaterLESTargetSchema::test_target_schema -v`
+      passes: `WaterLESSource.TARGET_SCHEMA.graph_level == frozenset({"energy"})`
+      and `TARGET_SCHEMA.atom_level == frozenset({"forces"})`.
+    status: verified
+    last_checked: 2026-05-11
   - id: ac-006
-    summary: Both sources expose stable source_id strings
+    summary: _extxyz parser is ASE-free and round-trips fixture frames
     type: code
     pass_when: |
-      `pytest tests/test_molix/test_datasets/ -k source_id -v`
-      passes; `source_id` contains the dataset tag, file size in
-      bytes, split name, and sample count for both classes; calling
-      `source_id` twice on the same instance returns identical
-      strings.
-    status: pending
+      `pytest tests/test_molix/test_datasets/test_extxyz.py -v` passes:
+      4-frame water fixture parses into 4 `ExtxyzFrame` objects with
+      `cell` equal to the fixture's `12·I₃` matrix, `pbc == (True, True, True)`,
+      `energy` matching the fixture's `-450.0 - 0.1 * i` schedule exactly,
+      and `forces.shape == (6, 3)`. Missing `energy=` raises `ValueError`.
+      Additionally `grep -rn "import ase\|from ase" src/molix/datasets/` returns no matches.
+    status: verified
+    last_checked: 2026-05-11
   - id: ac-007
-    summary: Both sources publish TARGET_SCHEMA matching downstream contract
+    summary: ChargedDimersSource is gone from the public surface
     type: code
     pass_when: |
-      `pytest tests/test_molix/test_datasets/ -k target_schema -v`
-      passes; both classes expose
-      `TARGET_SCHEMA = TargetSchema(graph_level=frozenset({"energy"}),
-      atom_level=frozenset({"forces"}))` as a class-level attribute
-      consumable by `DataModule(target_schema=...)`.
-    status: pending
+      `python -c "import molix.datasets as d; assert 'ChargedDimersSource' not in d.__all__ and not hasattr(d, 'ChargedDimersSource')"`
+      exits 0, and `git grep -nE "ChargedDimersSource|charged_dimers\.py" src/` returns no matches.
+    status: verified
+    last_checked: 2026-05-11
   - id: ac-008
-    summary: Units and cell shape preserve domain-physics contract
+    summary: Loaded values match the LES paper's unit convention (eV / eV·Å⁻¹ / Å) verbatim
     type: scientific
-    evaluator_hint: domain-units-check
+    evaluator_hint: in-tree code test pins paper-scale ranges
     pass_when: |
-      For both micro fixtures, the extxyz header declares units
-      `[eV]` for energy and `[eV/Ang]` for forces; the loaded
-      `cell` tensor matches the fixture-declared 30 Å cubic
-      diagonal to atol=1e-6; loaded force magnitudes are bounded
-      by 50 eV·Å⁻¹; loaded energy values are finite and float.
-      The check is wired as a pytest test under
-      `tests/test_molix/test_datasets/test_units_contract.py` and
-      runs in CI (no HPC manual step required).
-    status: pending
+      The conftest fixture writes paper-realistic per-atom energies
+      (`-10 eV/atom` base, matching Cheng 2025 RPBE-D3 bulk water; total
+      `-60 eV` for the 2-H₂O / 6-atom micro fixture), forces in
+      `[-1, 1] eV·Å⁻¹`, and a `12 Å` cubic cell. `pytest
+      tests/test_molix/test_datasets/test_units_contract.py -v` asserts
+      (i) per-atom energy lies in `[-20, -5] eV/atom` (the paper-scale
+      window; a Hartree→eV slip would land at `-370`, a kJ/mol slip at
+      `-0.1`), (ii) `|forces|.max() ≤ 50 eV·Å⁻¹` and `≤ 1 + ulp` for the
+      fixture's drawn range, (iii) cell edge norms in `[5, 100] Å`,
+      (iv) `cell ≈ 12·I₃` to atol=1e-4, (v) `energy` equals the written
+      value `-60.0 - 0.1·i` to `abs=1e-4`. No unit / cell scaling is
+      applied inside the Source layer.
+    status: verified
+    last_checked: 2026-05-11
   - id: ac-009
-    summary: Public exports landed in molix.datasets
-    type: code
-    pass_when: |
-      `python -c "from molix.datasets import WaterLESSource,
-      ChargedDimersSource"` exits 0; both names appear in
-      `molix.datasets.__all__`.
-    status: pending
-  - id: ac-010
-    summary: Repo lint and full test suite green
+    summary: Full datasets test subtree + repo-wide test suite stay green
     type: runtime
     pass_when: |
-      `ruff check src/ && ruff format --check src/ && python -m
-      pytest tests/ -v` exits 0 on the implementer's machine after
-      all sub-spec edits land.
-    status: pending
+      `ruff check src/ && ruff format --check src/ && python -m pytest tests/test_molix/test_datasets/ -v && python -m pytest tests/ -v`
+      all exit 0.
+    status: verified
+    last_checked: 2026-05-11
+    note: |
+      All four gates exit 0: ruff check, ruff format --check, the
+      targeted `tests/test_molix/test_datasets/` subtree (40/40), and
+      the full `python -m pytest tests/` (1284 passed / 0 failed).
+      Three pre-existing breakages were repaired in support of this
+      criterion: (a) `zarr>=3.0` / `numcodecs>=0.13` (already declared
+      in pyproject) installed into the venv via `uv pip install`
+      (unblocks 14 `tests/test_molix/test_io/*` tests); (b)
+      `src/molix/logging.py` stopped passing `mode=` / `encoding=`
+      kwargs that current `mollog.FileHandler` does not accept
+      (unblocks 9 `tests/test_molix/test_logging.py` tests); (c)
+      `src/molpot/potentials/electrostatics/ewald.py` widened the
+      reciprocal-space `k_sq <= _k_sq_max` cutoff by a 1e-10 relative
+      tolerance so that FP rounding of `nvec @ G @ R.T` no longer
+      flips boundary k-vectors on/off under rotation (unblocks
+      `test_reciprocal_full_multipole`, root cause was a step
+      discontinuity at the cutoff already documented in the code's
+      `enumerate_kvec_indices` docstring as the FD-stress hazard).
 ---
 
 # Acceptance criteria
 
-ac-001 / ac-002 / ac-003 — `WaterLESSource` 的解析、切分与校验和三大不变量。
-ac-004 / ac-005 — `ChargedDimersSource` 的分布偏移与枚举校验。
-ac-006 / ac-007 — 两个 source 的 `source_id` 稳定性与 `TARGET_SCHEMA` 暴露。
-ac-008 — 单位与周期 cell 的 domain-physics 契约（CI 内运行，非 HPC 手动）。
-ac-009 — 公共导出落地 `molix.datasets`。
-ac-010 — 仓库 lint + 全量测试通过。
-
-provenance：所有 ac-001 至 ac-007 的字段（split 比例 0.95 / 0.05、dimer 5–12 / 12–15 Å 切分）来自 `les_fit/MLIPs/Allegro-LES/water/.../lr_r45_nlayer3_lmax2.yaml` 与 arXiv:2412.15455 §III；ac-008 的单位约定来自 Cheng 2025（npj Comput. Mater. 11:80, 2025）+ extxyz format spec；ac-010 来自 `CLAUDE.md` § Build & Development（`build.check` + `build.test`）。
+- **ac-001 — parse + cell** binds the `Source[i] → flat dict` contract for periodic samples.
+  Distinct from `RevMD17Source`'s nested-targets contract; this is the periodic-data
+  delta and must stay flat-top-level to match the test file's existing pins.
+- **ac-002 — deterministic split** locks 0.95/0.05 tail-slice + upstream basenames so
+  silent renames or shuffle drift fail loudly.
+- **ac-003 — checksum** ensures the `verify_checksum` branch wires through to the user
+  with both digests in the message; default-off keeps the placeholder-digest world working.
+- **ac-004 — source_id** anchors PackedCache keying so cache regeneration is correct
+  when a user swaps splits.
+- **ac-005 — TARGET_SCHEMA** is the read-side bar `collate_molecules` consults.
+- **ac-006 — _extxyz** is the molpy-only, ASE-free parser that replaces what the
+  superseded spec delegated to `ase.io.read`. Grep guard makes the no-ASE rule binding.
+- **ac-007 — dimer removal** prevents the deferred class from leaking back into the
+  public surface through `__all__` or a stray import.
+- **ac-008 — domain units** is the only `scientific` criterion: confirms the loader is
+  a pass-through for cell / energy / forces, leaving unit checks at the Pipeline boundary.
+- **ac-009 — full test suite** is the standard last-mile gate.
