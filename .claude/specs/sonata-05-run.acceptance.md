@@ -46,7 +46,8 @@ criteria:
       --batch-size 2` 退出码 0；<out_dir>/submit.sbatch 存在；
       <out_dir>/jobid.txt 存在且内容为 int 字符串；
       `squeue -j $(cat <out_dir>/jobid.txt) -h` 至少返回一行。
-    status: pending
+    status: verified
+    last_checked: 2026-05-11
   - id: ac-005
     summary: 论文超参在 train.py 中显式可 grep
     type: code

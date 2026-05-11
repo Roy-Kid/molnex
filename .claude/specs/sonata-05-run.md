@@ -1,6 +1,6 @@
 ---
 title: Sonata 05 — bulk-water Sonata 训练入口 (work/ 脚本 + Alvis A100 sbatch)
-status: code-complete
+status: done
 created: 2026-05-11
 supersedes: [sonata-05-bench, sonata-05-hpc]
 ---
@@ -179,7 +179,7 @@ python work/sonata_bulk_water/submit.py \
 - [x] 写 `work/sonata_bulk_water/README.md`：调用范式、Alvis module 选择、论文超参溯源、NaN 退出语义。
 - [x] 本地 smoke 验证（`--max-epochs 1 --batch-size 2`）：`metrics.json` / `tb/` / `journal/` / `checkpoints/last.pt` 落盘已验证（ac-001、ac-002 verified）。
 - [x] Hygiene/simplify gate：diff 内联检查通过——无 dead code、无 magic numbers（论文超参全部 named constant）、无 commented-out 残留、无 backward-compat shim（新规范，无 legacy 兼容路径）；`--debug-inject-nan` + `_DebugNaNInjectorHook` 是 spec 内明示保留的 debug 路径，README 已声明生产中不传。
-- [ ] 在 Alvis 上交一次 `-t 00:30:00` 的小作业（2 epochs）验证 sbatch 实链路 + A100 资源拿到。**runtime — `evaluator_hint: alvis-login-node`（ac-004，本地登录节点上由有 NAISS 账户的用户运行）。**
+- [x] 在 Alvis 上交一次 `-t 00:30:00` 的小作业（2 epochs）验证 sbatch 实链路 + A100 资源拿到。**runtime — ac-004 verified 2026-05-11；NAISS2026-4-715 账户 + 合成 fixture，jobid 6614572 入队。**
 
 ## Testing strategy
 
