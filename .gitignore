@@ -117,4 +117,6 @@ cython_debug/
 examples/
 
 # Claude Code settings (project-local)
-.claude/
+.claude/*
+!.claude/notes/
+!.claude/specs/
