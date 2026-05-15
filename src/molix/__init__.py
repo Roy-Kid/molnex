@@ -64,6 +64,7 @@ _load_ops_library()
 
 from molix import logger, logging
 from molix.compile import maybe_compile
+from molix.export import export_model
 from molix.config import config
 from molix.core.checkpoint import Checkpoint, CheckpointBackend, TorchSaveBackend
 from molix.core.losses import MAELoss, MSELoss, WeightedLoss
@@ -85,6 +86,7 @@ __all__ = [
     "config",
     "logger",
     "logging",
+    "export_model",
     "maybe_compile",
     "ProfilerHook",
     "JournalHook",
