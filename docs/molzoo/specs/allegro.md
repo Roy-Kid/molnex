@@ -414,7 +414,7 @@ dataset recipe, training configuration, and run log.
 Driver:
 
 ```bash
-python benchmarks/run_allegro_bench.py --device cuda
+python benchmarks/molzoo/bm_allegro.py --device cuda
 ```
 
 Reference local measurement, taken on 2026-04-26 with Tesla T4, `bs=32`,
