@@ -9,11 +9,11 @@ and reports a CSV row whose ``improvement_pct`` column gates the load-bearing
 the no-Ewald baseline" claim.
 
 Drivers:
-    python benchmarks/bm_molpot/bm_sonata.py --smoke
-    python benchmarks/bm_molpot/bm_sonata.py --full --n-steps 10000
+    python benchmarks/molpot/sonata.py --smoke
+    python benchmarks/molpot/sonata.py --full --n-steps 10000
 
-    python -m pytest benchmarks/bm_molpot/bm_sonata.py -v          # smoke + kernel
-    python -m pytest benchmarks/bm_molpot/bm_sonata.py -m bench_long  # full
+    python -m pytest benchmarks/molpot/sonata.py -v          # smoke + kernel
+    python -m pytest benchmarks/molpot/sonata.py -m bench_long  # full
 
 Smoke mode (default; ``--smoke``) runs ``SMOKE_N_STEPS`` (= 100) training
 steps on a synthetic 4-water periodic box, never hits the network, and skips
@@ -968,7 +968,7 @@ def _parse_argv(argv: list[str] | None) -> argparse.Namespace:
         "--csv-path",
         type=Path,
         default=CSV_PATH,
-        help="Override CSV destination (defaults to benchmarks/bm_molpot/sonata_results.csv).",
+        help="Override CSV destination (defaults to benchmarks/molpot/sonata_results.csv).",
     )
     parser.add_argument(
         "--device",

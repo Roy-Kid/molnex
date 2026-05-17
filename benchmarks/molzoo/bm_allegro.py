@@ -1,17 +1,15 @@
-"""Standalone Allegro performance evaluation.
+"""Benchmarks for the Allegro encoder + ``EdgeEnergyHead`` energy pipeline.
 
-Builds a representative QM9-scale Allegro encoder + ``EdgeEnergyHead`` energy
-pipeline, runs forward / forward+backward (with force gradients) / scaling
-sweeps on whichever device is available (CUDA preferred), and prints a single
-markdown table to stdout. No pytest-benchmark dependency.
+Two modes of operation:
 
-Usage::
+1. **pytest-benchmark** (micro)::
 
-    python benchmarks/run_allegro_bench.py
-    python benchmarks/run_allegro_bench.py --device cuda --num-layers 3 --l-max 2
+       pytest benchmarks/molzoo/bm_allegro.py --benchmark-only
 
-Reference target shape (QM9):
-    bs=32, N̄=18 atoms / graph, r_cut=5 Å, l_max=2, num_layers=3.
+2. **Standalone CLI** (perf eval with scaling sweeps)::
+
+       python benchmarks/molzoo/bm_allegro.py
+       python benchmarks/molzoo/bm_allegro.py --device cuda --num-layers 3 --l-max 2 --scaling
 """
 
 from __future__ import annotations
@@ -22,11 +20,91 @@ import statistics
 import time
 from contextlib import contextmanager
 
+import pytest
 import torch
+import torch._dynamo
 
 from molix.data.types import AtomData, EdgeData, GraphBatch, GraphData
 from molpot.heads import EdgeEnergyHead
 from molzoo.allegro import Allegro
+
+# ==============================================================================
+# pytest-benchmark fixtures & classes
+# ==============================================================================
+
+
+@pytest.fixture
+def module():
+    return Allegro(
+        num_elements=5,
+        num_scalar_features=16,
+        num_tensor_features=8,
+        r_max=5.0,
+        num_bessel=8,
+        l_max=1,
+        num_layers=2,
+        type_embed_dim=16,
+        latent_mlp_depth=1,
+        latent_mlp_width=16,
+        avg_num_neighbors=4.0,
+    )
+
+
+@pytest.fixture
+def head(module):
+    return EdgeEnergyHead(
+        input_dim=module.output_dim,
+        hidden_dim=128,
+        avg_num_neighbors=4.0,
+    )
+
+
+@pytest.fixture
+def batch(graph_batch_td):
+    """Add a ``graphs`` subdict so ``EdgeEnergyHead`` can read ``batch_size``."""
+    n_graphs = graph_batch_td["atoms"].batch.max().item() + 1
+    graph_batch_td["graphs"] = GraphData(
+        num_atoms=torch.tensor(
+            [(graph_batch_td["atoms", "batch"] == g).sum() for g in range(n_graphs)],
+            dtype=torch.long,
+        ),
+        batch_size=[n_graphs],
+    )
+    return graph_batch_td
+
+
+class BMAllegro:
+    def test_forward(self, benchmark, module, batch):
+        with torch.no_grad():
+            benchmark(module, batch.clone())
+
+    def test_forward_energy(self, benchmark, module, head, batch):
+        def _full():
+            td = module(batch.clone())
+            return head(td)
+
+        with torch.no_grad():
+            benchmark(_full)
+
+    def test_backward_energy(self, benchmark, module, head, batch):
+        def _full_with_grad():
+            b = batch.clone()
+            b["atoms", "pos"].requires_grad_(True)
+            td = module(b)
+            e = head(td)["energy"].sum()
+            e.backward()
+
+        benchmark(_full_with_grad)
+
+    def test_graph_breaks(self, module, batch):
+        explanation = torch._dynamo.explain(module)(batch.clone())
+        print(f"Graph break count: {explanation.graph_break_count}")
+        print(f"Break reasons: {explanation.break_reasons}")
+
+
+# ==============================================================================
+# Standalone CLI (perf eval)
+# ==============================================================================
 
 
 def _build_random_qm9_batch(
