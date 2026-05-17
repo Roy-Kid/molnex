@@ -14,6 +14,7 @@ Dependency direction: ``hooks/ → io/ + core/`` — never the reverse.
 from __future__ import annotations
 
 from molix.hooks.checkpoint import CheckpointHook
+from molix.hooks.early_stop import EarlyStop
 from molix.hooks.gpu import GPUMemoryHook, GPUUtilsHook
 from molix.hooks.journal import JournalHook
 from molix.hooks.profiler import ProfilerHook
@@ -25,6 +26,7 @@ from molix.hooks.training import ActivationCheckpointingHook, GradClipHook
 __all__ = [
     "ActivationCheckpointingHook",
     "CheckpointHook",
+    "EarlyStop",
     "GPUMemoryHook",
     "GPUUtilsHook",
     "GradClipHook",

@@ -5,7 +5,6 @@ once ratified, they are the authoritative description of a feature.
 
 | Slug | Title | Status | Owner agent | Created |
 |------|-------|--------|-------------|---------|
-| [multipole-layer](multipole-layer.md) | Direct permanent multipole layer over Allegro (`molpot.heads.PermMultipoleHead`) | draft | `mn-impl` | 2026-04-25 |
 | [sonata-04-docs](sonata-04-docs.md) | Sonata boundary documentation + design doc (chain 4/4) | approved | `mol:impl` | 2026-05-10 |
 | [sonata-05-data](sonata-05-data.md) | Bulk-water RPBE-D3 molpy-only loader (chain 5/5·1; supersedes 2026-05-10 ASE+dimer draft) | approved | `mol:impl` | 2026-05-10 |
 | [sonata-05-hpc](sonata-05-hpc.md) | First-class DDP wrap shim for `molix.core.Trainer` — single-node multi-GPU | approved | `mol:impl` | 2026-05-10 |

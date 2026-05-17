@@ -1,6 +1,6 @@
 # molzoo
 
-Molecular encoder zoo. Provides encoder-only architectures (MACE, Allegro) without built-in energy/force readout. Downstream potential composition is handled by `molpot.composition`.
+Molecular model zoo. Provides encoder architectures (MACE, Allegro) and potential models (Sonata).
 
 ## Model Specifications
 
