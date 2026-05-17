@@ -51,17 +51,11 @@ def export_model(
         FileNotFoundError: If the parent of *export_dir* does not exist.
     """
     if not isinstance(model, nn.Module):
-        raise TypeError(
-            f"model must be an nn.Module, got {type(model).__name__}"
-        )
+        raise TypeError(f"model must be an nn.Module, got {type(model).__name__}")
     if not isinstance(example_inputs, tuple):
-        raise TypeError(
-            f"example_inputs must be a tuple, got {type(example_inputs).__name__}"
-        )
+        raise TypeError(f"example_inputs must be a tuple, got {type(example_inputs).__name__}")
     if device not in _VALID_DEVICES:
-        raise RuntimeError(
-            f"device must be one of {sorted(_VALID_DEVICES)}, got {device!r}"
-        )
+        raise RuntimeError(f"device must be one of {sorted(_VALID_DEVICES)}, got {device!r}")
 
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -72,8 +66,7 @@ def export_model(
     model.eval()
     target_model = model.to(device)
     device_inputs = tuple(
-        inp.to(device) if isinstance(inp, torch.Tensor) else inp
-        for inp in example_inputs
+        inp.to(device) if isinstance(inp, torch.Tensor) else inp for inp in example_inputs
     )
 
     so_path = str(export_dir / f"{name}.so")
@@ -90,8 +83,7 @@ def export_model(
     meta = {
         "device": device,
         "input_shapes": [
-            list(inp.shape) if isinstance(inp, torch.Tensor) else None
-            for inp in device_inputs
+            list(inp.shape) if isinstance(inp, torch.Tensor) else None for inp in device_inputs
         ],
         "input_dtypes": [
             str(inp.dtype) if isinstance(inp, torch.Tensor) else type(inp).__name__
@@ -102,5 +94,5 @@ def export_model(
     with open(export_dir / f"{name}.meta.json", "w") as f:
         json.dump(meta, f, indent=2)
 
-    logger.info("Exported model to %s (device=%s)", export_dir, device)
+    logger.info(f"Exported model to {export_dir} (device={device})")
     return export_dir

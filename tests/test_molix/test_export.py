@@ -32,6 +32,7 @@ def _load_and_run(so_path: str, inputs: torch.Tensor) -> torch.Tensor:
     runner = runner_cls(so_path, 1)
     return runner.run([inputs])[0]
 
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -68,7 +69,9 @@ class TestExportCreatesFiles:
     def test_all_expected_files_exist(self, tmp_path: Path, small_mlp: nn.Sequential) -> None:
         """ac-001: .so, .pt, .meta.json all present after export."""
         x = torch.randn(4, 10)
-        export_dir = export_model(small_mlp, (x,), export_dir=tmp_path / "export_001", name="my_model")
+        export_dir = export_model(
+            small_mlp, (x,), export_dir=tmp_path / "export_001", name="my_model"
+        )
 
         assert isinstance(export_dir, Path)
         assert (export_dir / "my_model.so").is_file()
@@ -78,7 +81,9 @@ class TestExportCreatesFiles:
     def test_meta_json_content(self, tmp_path: Path, small_mlp: nn.Sequential) -> None:
         """meta.json contains device, input shapes/dtypes, model class name."""
         x = torch.randn(4, 10)
-        export_dir = export_model(small_mlp, (x,), export_dir=tmp_path / "export_meta", name="meta_check")
+        export_dir = export_model(
+            small_mlp, (x,), export_dir=tmp_path / "export_meta", name="meta_check"
+        )
 
         with open(export_dir / "meta_check.meta.json") as f:
             meta: dict = json.load(f)
@@ -121,10 +126,14 @@ class TestExportCreatesFiles:
 class TestExportLoadable:
     """Exported .so loadable via AOTIModelContainerRunner."""
 
-    def test_runner_loads_and_returns_tensor(self, tmp_path: Path, small_mlp: nn.Sequential) -> None:
+    def test_runner_loads_and_returns_tensor(
+        self, tmp_path: Path, small_mlp: nn.Sequential
+    ) -> None:
         """ac-002: exported .so loads via AOTIModelContainerRunner and returns correct shape."""
         x = torch.randn(4, 10)
-        export_dir = export_model(small_mlp, (x,), export_dir=tmp_path / "export_load", name="loadable")
+        export_dir = export_model(
+            small_mlp, (x,), export_dir=tmp_path / "export_load", device="cpu", name="loadable"
+        )
 
         so_path = str(export_dir / "loadable.so")
         result = _load_and_run(so_path, x)
@@ -149,7 +158,9 @@ class TestExportCpuCorrectness:
         with torch.no_grad():
             expected = small_mlp(x)
 
-        export_dir = export_model(small_mlp, (x,), export_dir=tmp_path / "export_cpu", name="cpu_model")
+        export_dir = export_model(
+            small_mlp, (x,), export_dir=tmp_path / "export_cpu", device="cpu", name="cpu_model"
+        )
         actual = _load_and_run(str(export_dir / "cpu_model.so"), x)
 
         assert torch.allclose(expected, actual, atol=1e-5), (
@@ -166,7 +177,13 @@ class TestExportCpuCorrectness:
             expected_small = small_mlp(x_small)
             expected_large = small_mlp(x_large)
 
-        export_dir = export_model(small_mlp, (x_large,), export_dir=tmp_path / "export_multi_batch", name="multi")
+        export_dir = export_model(
+            small_mlp,
+            (x_large,),
+            export_dir=tmp_path / "export_multi_batch",
+            device="cpu",
+            name="multi",
+        )
         so_path = str(export_dir / "multi.so")
         actual_small = _load_and_run(so_path, x_small)
         actual_large = _load_and_run(so_path, x_large)
@@ -193,7 +210,9 @@ class TestExportCudaCorrectness:
         with torch.no_grad():
             expected = model(x)
 
-        export_dir = export_model(model, (x,), export_dir=tmp_path / "export_cuda", device="cuda", name="cuda_model")
+        export_dir = export_model(
+            model, (x,), export_dir=tmp_path / "export_cuda", device="cuda", name="cuda_model"
+        )
         actual = _load_and_run(str(export_dir / "cuda_model.so"), x)
 
         assert torch.allclose(expected, actual, atol=1e-5), (
@@ -212,7 +231,9 @@ class TestExportDeviceAuto:
     def test_auto_device_in_meta(self, tmp_path: Path, small_mlp: nn.Sequential) -> None:
         """ac-005: meta.json device field reflects auto-detection."""
         x = torch.randn(4, 10)
-        export_dir = export_model(small_mlp, (x,), export_dir=tmp_path / "export_auto", device="auto", name="auto_model")
+        export_dir = export_model(
+            small_mlp, (x,), export_dir=tmp_path / "export_auto", device="auto", name="auto_model"
+        )
 
         with open(export_dir / "auto_model.meta.json") as f:
             meta: dict = json.load(f)
@@ -236,7 +257,9 @@ class TestExportErrors:
         with pytest.raises(TypeError):
             export_model("not_a_module", (torch.randn(4, 10),), export_dir=tmp_path / "fail_type")
 
-    def test_non_tuple_example_inputs_raises_typeerror(self, tmp_path: Path, small_mlp: nn.Sequential) -> None:
+    def test_non_tuple_example_inputs_raises_typeerror(
+        self, tmp_path: Path, small_mlp: nn.Sequential
+    ) -> None:
         """Passing non-tuple example_inputs raises TypeError."""
         with pytest.raises(TypeError):
             export_model(small_mlp, torch.randn(4, 10), export_dir=tmp_path / "fail_inputs")  # type: ignore[arg-type]
@@ -253,7 +276,9 @@ class TestExportErrors:
         """Unsupported device string raises RuntimeError."""
         x = torch.randn(4, 10)
         with pytest.raises(RuntimeError):
-            export_model(small_mlp, (x,), export_dir=tmp_path / "fail_device", device="invalid_device")
+            export_model(
+                small_mlp, (x,), export_dir=tmp_path / "fail_device", device="invalid_device"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -274,12 +299,16 @@ class TestExportLifecycle:
 
         assert not small_mlp.training, "Model should be in eval mode after export"
 
-    def test_exported_pt_loadable_as_state_dict(self, tmp_path: Path, small_mlp: nn.Sequential) -> None:
+    def test_exported_pt_loadable_as_state_dict(
+        self, tmp_path: Path, small_mlp: nn.Sequential
+    ) -> None:
         """The .pt file contains a valid state_dict matching the original."""
         original_state = {k: v.clone() for k, v in small_mlp.state_dict().items()}
 
         x = torch.randn(4, 10)
-        export_dir = export_model(small_mlp, (x,), export_dir=tmp_path / "export_pt", name="weights")
+        export_dir = export_model(
+            small_mlp, (x,), export_dir=tmp_path / "export_pt", device="cpu", name="weights"
+        )
 
         loaded_state = torch.load(export_dir / "weights.pt", weights_only=True)
         assert isinstance(loaded_state, dict)
@@ -299,11 +328,13 @@ class TestExportImmutability:
     """Original model unchanged after export."""
 
     def test_state_dict_unchanged(self, tmp_path: Path, small_mlp: nn.Sequential) -> None:
-        """Model's state_dict parameters are unchanged after export."""
+        """Model's state_dict parameters are unchanged after export (CPU path — under
+        ``device="auto"`` with CUDA available the model is intentionally moved to GPU,
+        per spec §设备自动检测)."""
         original_state = {k: v.clone() for k, v in small_mlp.state_dict().items()}
 
         x = torch.randn(4, 10)
-        export_model(small_mlp, (x,), export_dir=tmp_path / "export_immut")
+        export_model(small_mlp, (x,), export_dir=tmp_path / "export_immut", device="cpu")
 
         for key in original_state:
             assert torch.equal(original_state[key], small_mlp.state_dict()[key]), (

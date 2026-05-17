@@ -64,13 +64,13 @@ _load_ops_library()
 
 from molix import logger, logging
 from molix.compile import maybe_compile
-from molix.export import export_model
 from molix.config import config
 from molix.core.checkpoint import Checkpoint, CheckpointBackend, TorchSaveBackend
 from molix.core.losses import MAELoss, MSELoss, WeightedLoss
 from molix.core.state import Stage, StepResult, TrainState
 from molix.core.trainer import Trainer
-from molix.hooks import JournalHook, ProfilerHook
+from molix.export import export_model
+from molix.hooks import ProfilerHook
 
 __all__ = [
     "Stage",
@@ -89,5 +89,4 @@ __all__ = [
     "export_model",
     "maybe_compile",
     "ProfilerHook",
-    "JournalHook",
 ]

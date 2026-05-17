@@ -1,6 +1,6 @@
 ---
 title: AOT Inductor 模型导出
-status: approved
+status: done
 created: 2026-05-14
 ---
 
@@ -46,10 +46,10 @@ export_model(model, example_inputs, "path/to/export_dir")
 
 ## 任务
 
-- [ ] Write failing tests in `tests/test_molix/test_export.py`
-- [ ] Implement `export_model()` in `src/molix/export.py`
-- [ ] Add `export_model` to `src/molix/__init__.py` exports
-- [ ] Run test suite
+- [x] Write failing tests in `tests/test_molix/test_export.py`
+- [x] Implement `export_model()` in `src/molix/export.py`
+- [x] Add `export_model` to `src/molix/__init__.py` exports
+- [x] Run test suite
 
 ## 测试策略
 
