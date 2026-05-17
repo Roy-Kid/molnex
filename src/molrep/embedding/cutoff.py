@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+import math
+
 from pydantic import BaseModel, Field
+
+from molix import config
 
 Key = str | tuple[str, ...]
 
@@ -159,3 +163,65 @@ class PolynomialCutoff(nn.Module):
 
         c = 1.0 - c_p * x_p + c_p1 * x_p1 - c_p2 * x_p2
         return torch.where(mask, c, torch.zeros_like(c))
+
+
+class TanhCutoffSpec(BaseModel):
+    """Specification for tanh-based cutoff function (PiNN ``f2``).
+
+    Attributes:
+        r_cut: Cutoff radius. Values are 0 for r >= r_cut. Must be positive.
+    """
+
+    r_cut: float = Field(..., gt=0)
+
+
+class TanhCutoff(nn.Module):
+    """Tanh-based smooth cutoff (PiNN ``f2``).
+
+    ``c(r) = (tanh(1 - r / r_cut) / tanh(1)) ** 3`` for ``r < r_cut``, else 0.
+    """
+
+    def __init__(self, *, r_cut: float) -> None:
+        super().__init__()
+        self.config = TanhCutoffSpec(r_cut=r_cut)
+        self.register_buffer("r_cut", torch.tensor(float(r_cut), dtype=config.ftype))
+        self.r_cut: torch.Tensor
+        self.register_buffer("tanh1", torch.tensor(math.tanh(1.0), dtype=config.ftype))
+        self.tanh1: torch.Tensor
+
+    def forward(self, r: torch.Tensor) -> torch.Tensor:
+        r = r.to(dtype=self.r_cut.dtype)
+        x = r / self.r_cut
+        mask = r < self.r_cut
+        out = (torch.tanh(1.0 - x) / self.tanh1) ** 3
+        return torch.where(mask, out, torch.zeros_like(out))
+
+
+class HalfCosineCutoffSpec(BaseModel):
+    """Specification for half-cosine cutoff function (PiNN ``hip``).
+
+    Attributes:
+        r_cut: Cutoff radius. Values are 0 for r >= r_cut. Must be positive.
+    """
+
+    r_cut: float = Field(..., gt=0)
+
+
+class HalfCosineCutoff(nn.Module):
+    """Half-cosine squared cutoff (PiNN ``hip``).
+
+    ``c(r) = cos(pi * r / (2 * r_cut)) ** 2`` for ``r < r_cut``, else 0.
+    """
+
+    def __init__(self, *, r_cut: float) -> None:
+        super().__init__()
+        self.config = HalfCosineCutoffSpec(r_cut=r_cut)
+        self.register_buffer("r_cut", torch.tensor(float(r_cut), dtype=config.ftype))
+        self.r_cut: torch.Tensor
+
+    def forward(self, r: torch.Tensor) -> torch.Tensor:
+        r = r.to(dtype=self.r_cut.dtype)
+        x = r / self.r_cut
+        mask = r < self.r_cut
+        out = torch.cos(0.5 * math.pi * x) ** 2
+        return torch.where(mask, out, torch.zeros_like(out))

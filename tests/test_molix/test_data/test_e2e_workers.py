@@ -9,7 +9,7 @@ real training runs:
 * MmapDataset must round-trip through pickle intact
 
 Test flow mirrors the data path of train_allegro_qm9.py:
-pipeline → PipelineSpec.build_cache() → MmapDataset → Subset →
+pipeline → PipelineSpec.cache() → MmapDataset → Subset →
 DataModule(num_workers>0) → iterate.
 """
 
@@ -65,14 +65,13 @@ def _raw_samples(n: int = 16) -> list[dict]:
 
 
 def test_mmap_dataset_with_num_workers_4(tmp_path):
-    """Reproduces the training data path: cache() → MmapDataset → split →
+    """Reproduces the training data path: cache() → dataset → split →
     DataModule with forkserver + multiple workers → iterate one epoch."""
     src = InMemorySource(_raw_samples(16))
-    spec = Pipeline("e2e").add(FakeNeighborList()).build()
-    sink = tmp_path / "prepared.pt"
-    spec.build_cache(src, sink)
+    pipe = Pipeline("e2e").add(FakeNeighborList()).build()
+    dag = pipe.cache(src, base_dir=tmp_path)
 
-    full = MmapDataset(sink)
+    full = dag.dataset(mmap=True)
     train, val = full.split(ratio=0.75, seed=0)
     assert len(train) == 12 and len(val) == 4
 
@@ -97,16 +96,15 @@ def test_mmap_dataset_with_num_workers_4(tmp_path):
     assert seen_batches == 3  # 12 / 4
 
 
-def test_collate_picklable_with_batch_tasks(tmp_path):
-    """Collate fn wraps batch_tasks; must still pickle."""
+def test_collate_picklable_with_batch_nodes(tmp_path):
+    """Collate fn wraps batch_nodes; must still pickle."""
     import pickle
 
     src = InMemorySource(_raw_samples(8))
-    spec = Pipeline("p").add(FakeNeighborList()).build()
-    sink = tmp_path / "prepared.pt"
-    spec.build_cache(src, sink)
+    pipe = Pipeline("p").add(FakeNeighborList()).build()
+    dag = pipe.cache(src, base_dir=tmp_path)
 
-    ds = MmapDataset(sink)
+    ds = dag.dataset(mmap=True)
     train, val = ds.split(ratio=0.5)
 
     schema = TargetSchema(graph_level=frozenset({"U0"}), atom_level=frozenset())

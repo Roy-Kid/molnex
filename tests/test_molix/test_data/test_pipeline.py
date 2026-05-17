@@ -1,8 +1,8 @@
-"""Tests for the PipelineSpec / Pipeline builder.
+"""Tests for PipelineSpec / Pipeline builder / Node / DAGCache.
 
-PipelineSpec owns both declaration (task list, identity) and orchestration
-(``.run`` / ``.transform`` / ``.cache_key`` / ``.build_cache`` / ``.cache``).
-TaskEntry owns task dispatch (``.apply``).
+PipelineSpec owns both declaration (node list, identity) and orchestration
+(``.run`` / ``.transform`` / ``.cache_key`` / ``.cache`` / ``.fit``).
+Node owns task dispatch (``.apply``) and per-node cache key derivation.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import pytest
 import torch
 
 from molix.data.cache import PackedCache
-from molix.data.pipeline import Pipeline, TaskEntry
+from molix.data.pipeline import DAGCache, Node, Pipeline
 from molix.data.source import InMemorySource
 from molix.data.task import BatchTask, DatasetTask, SampleTask
 
@@ -99,32 +99,17 @@ class TestBuilder:
 
     def test_add_task_instance(self):
         spec = Pipeline("p").add(CountingSample("foo")).build()
-        assert len(spec.tasks) == 1
-        assert spec.tasks[0].task.task_id == "counting:foo"
+        assert len(spec.nodes) == 1
+        assert spec.nodes[0].task.task_id == "counting:foo"
 
     def test_add_bare_callable(self):
         spec = Pipeline("p").add(lambda s: s, name="noop").build()
-        assert spec.tasks[0].name == "noop"
+        assert spec.nodes[0].name == "noop"
 
-    def test_decorator_task(self):
-        p = Pipeline("p")
-
-        @p.task
-        def add_tag(s: dict) -> dict:
-            return {**s, "tag": True}
-
-        spec = p.build()
-        assert spec.tasks[0].name == "add_tag"
-
-    def test_decorator_with_explicit_name(self):
-        p = Pipeline("p")
-
-        @p.task(name="custom")
-        def _f(s: dict) -> dict:
-            return s
-
-        spec = p.build()
-        assert spec.tasks[0].name == "custom"
+    def test_add_prebuilt_node(self):
+        node = Node(name="n", task=CountingSample())
+        spec = Pipeline("p").node(node).build()
+        assert spec.nodes[0] is node
 
     def test_rejects_non_task_non_callable(self):
         with pytest.raises(TypeError, match="Task"):
@@ -135,19 +120,18 @@ class TestBuilder:
         with pytest.raises(ValueError, match="already registered"):
             p.add(CountingSample(), name="shared")
 
-    def test_rejects_duplicate_name_across_add_and_decorator(self):
-        p = Pipeline("p").add(lambda s: s, name="shared")
-        with pytest.raises(ValueError, match="already registered"):
-
-            @p.task(name="shared")
-            def _f(s: dict) -> dict:
-                return s
-
     def test_rejects_duplicate_inferred_name(self):
-        # Same Task class → same task_id → same default name → should raise.
         p = Pipeline("p").add(CountingSample())
         with pytest.raises(ValueError, match="already registered"):
             p.add(CountingSample())
+
+    def test_add_with_reads_writes(self):
+        node = Pipeline("p").add(
+            CountingSample(), name="c",
+            reads={"Z", "pos"}, writes={"edge_index"}
+        ).build().nodes[0]
+        assert node.reads == frozenset({"Z", "pos"})
+        assert node.writes == frozenset({"edge_index"})
 
 
 # ---------------------------------------------------------------------------
@@ -156,20 +140,20 @@ class TestBuilder:
 
 
 class TestGrouping:
-    def test_prepare_tasks_include_sample_and_dataset(self):
+    def test_prepare_nodes_include_sample_and_dataset(self):
         spec = Pipeline("p").add(CountingSample()).add(MeanShift()).add(NoopBatch()).build()
-        assert len(spec.prepare_tasks) == 2
-        assert len(spec.batch_tasks) == 1
+        assert len(spec.prepare_nodes) == 2
+        assert len(spec.batch_nodes) == 1
 
-    def test_plain_callable_counts_as_prepare(self):
+    def test_plain_callable_not_cacheable(self):
         spec = Pipeline("p").add(lambda s: s, name="noop").build()
-        assert len(spec.prepare_tasks) == 1
-        assert len(spec.batch_tasks) == 0
+        assert len(spec.prepare_nodes) == 0  # bare callable is not SampleTask/DatasetTask
+        assert len(spec.batch_nodes) == 0
 
-    def test_prepare_tasks_order_preserved(self):
+    def test_prepare_nodes_order_preserved(self):
         a, b = CountingSample("a"), CountingSample("b")
         spec = Pipeline("p").add(a).add(b).build()
-        assert [e.task for e in spec.prepare_tasks] == [a, b]
+        assert [n.task for n in spec.prepare_nodes] == [a, b]
 
 
 # ---------------------------------------------------------------------------
@@ -210,44 +194,79 @@ class TestPipelineId:
 
 
 class TestToDict:
-    def test_contains_task_names_and_types(self):
+    def test_contains_node_names_and_types(self):
         spec = Pipeline("p").add(CountingSample("a")).add(NoopBatch()).build()
         d = spec.to_dict()
         assert d["name"] == "p"
         assert d["pipeline_id"] == spec.pipeline_id
-        names = [t["name"] for t in d["tasks"]]
-        types = [t["type"] for t in d["tasks"]]
+        names = [n["name"] for n in d["nodes"]]
+        types = [n["type"] for n in d["nodes"]]
         assert names == ["counting:a", "noop:batch"]
         assert types == ["CountingSample", "NoopBatch"]
+        assert d["edges"]  # linear edge derived
+
+    def test_edges_reflect_linear_chain(self):
+        spec = Pipeline("p").add(CountingSample("a")).add(CountingSample("b")).build()
+        d = spec.to_dict()
+        assert len(d["edges"]) == 1
+        assert d["edges"][0]["from"] == "counting:a"
+        assert d["edges"][0]["to"] == "counting:b"
 
 
 # ---------------------------------------------------------------------------
-# TaskEntry
+# Node
 # ---------------------------------------------------------------------------
 
 
-class TestTaskEntry:
+class TestNode:
     def test_is_frozen(self):
-        e = TaskEntry(name="x", task=CountingSample())
-        with pytest.raises(Exception):  # FrozenInstanceError or AttributeError
-            e.name = "y"  # type: ignore[misc]
+        n = Node(name="x", task=CountingSample())
+        with pytest.raises(Exception):
+            n.name = "y"  # type: ignore[misc]
 
     def test_apply_dispatches_runnable(self):
         t = CountingSample()
-        entry = TaskEntry(name="t", task=t)
-        out = entry.apply({"y": torch.tensor([0.0])})
+        node = Node(name="t", task=t)
+        out = node.apply({"y": torch.tensor([0.0])})
         assert out["counter"] is True
         assert t.calls == 1
 
     def test_apply_dispatches_bare_callable(self):
-        entry = TaskEntry(name="f", task=lambda s: {**s, "tag": True})
-        out = entry.apply({"y": 0})
+        node = Node(name="f", task=lambda s: {**s, "tag": True})
+        out = node.apply({"y": 0})
         assert out["tag"] is True
 
     def test_apply_rejects_non_callable(self):
-        entry = TaskEntry(name="bad", task=42)  # type: ignore[arg-type]
+        node = Node(name="bad", task=42)  # type: ignore[arg-type]
         with pytest.raises(TypeError):
-            entry.apply({})
+            node.apply({})
+
+    def test_cache_key_depends_on_upstream_keys(self):
+        node = Node(name="n", task=CountingSample())
+        a = node.cache_key(("src:v1",), "", None)
+        b = node.cache_key(("src:v2",), "", None)
+        assert a != b
+
+    def test_cache_key_depends_on_fit_source(self):
+        node = Node(name="n", task=CountingSample())
+        a = node.cache_key(("up",), "fs1", None)
+        b = node.cache_key(("up",), "fs2", None)
+        assert a != b
+
+    def test_cache_key_depends_on_extra(self):
+        node = Node(name="n", task=CountingSample())
+        a = node.cache_key(("up",), "", {"n_train": "100"})
+        b = node.cache_key(("up",), "", {"n_train": "200"})
+        assert a != b
+
+    def test_is_cacheable(self):
+        assert Node(name="s", task=CountingSample()).is_cacheable is True
+        assert Node(name="d", task=MeanShift()).is_cacheable is True
+        assert Node(name="b", task=NoopBatch()).is_cacheable is False
+
+    def test_needs_fit(self):
+        assert Node(name="d", task=MeanShift()).needs_fit is True
+        assert Node(name="s", task=CountingSample()).needs_fit is False
 
 
 # ---------------------------------------------------------------------------
@@ -256,14 +275,14 @@ class TestTaskEntry:
 
 
 class TestTransform:
-    def test_applies_prepare_tasks_in_order(self):
+    def test_applies_prepare_nodes_in_order(self):
         counter = CountingSample("a")
         spec = Pipeline("p").add(counter).build()
         out = spec.transform({"y": torch.tensor([0.0])})
         assert out["a"] is True
         assert counter.calls == 1
 
-    def test_skips_batch_tasks(self):
+    def test_skips_batch_nodes(self):
         counter = CountingSample("a")
         batch = NoopBatch()
         spec = Pipeline("p").add(counter).add(batch).build()
@@ -304,6 +323,13 @@ class TestRun:
         assert shift.fit_calls == 1
         assert abs(shift.mean - 2.0) < 1e-9
 
+    def test_fit_states_skips_fit(self):
+        shift = MeanShift()
+        spec = Pipeline("p").add(shift).build()
+        list(spec.run(InMemorySource(_samples(4)), fit_states={"mean_shift:y": {"mean": torch.tensor(5.0)}}))
+        assert shift.fit_calls == 0
+        assert shift.mean == 5.0
+
     def test_returns_iterator(self):
         import types
 
@@ -313,27 +339,53 @@ class TestRun:
 
 
 # ---------------------------------------------------------------------------
-# collect_task_states / load_task_states
+# fit — separate fit phase
 # ---------------------------------------------------------------------------
 
 
-class TestTaskStates:
-    def test_collect_includes_only_dataset_tasks(self):
+class TestFit:
+    def test_fit_returns_states(self):
+        spec = Pipeline("p").add(MeanShift("y")).build()
+        states = spec.fit(InMemorySource(_samples(6)))  # y=0..5 → mean=2.5
+        assert set(states) == {"mean_shift:y"}
+        assert abs(float(states["mean_shift:y"]["mean"].item()) - 2.5) < 1e-9
+
+    def test_fit_with_upstream_sample_tasks(self):
+        """Upstream SampleTasks are applied before fitting DatasetTasks."""
+        counter = CountingSample("pre")
+        shift = MeanShift("y")
+        spec = Pipeline("p").add(counter).add(shift).build()
+        states = spec.fit(InMemorySource(_samples(4)))
+        assert counter.calls == 4  # applied to each fit sample
+        assert abs(float(states["mean_shift:y"]["mean"].item()) - 1.5) < 1e-9
+
+    def test_fit_only_includes_dataset_tasks(self):
+        spec = Pipeline("p").add(CountingSample()).add(MeanShift()).build()
+        states = spec.fit(InMemorySource(_samples(4)))
+        assert set(states) == {"mean_shift:y"}
+
+
+# ---------------------------------------------------------------------------
+# collect_fit_states / load_fit_states
+# ---------------------------------------------------------------------------
+
+
+class TestFitStates:
+    def test_collect_includes_only_dataset_task_nodes(self):
         spec = Pipeline("p").add(CountingSample("s")).add(MeanShift("y")).build()
         list(spec.run(InMemorySource(_samples(4))))
-        states = spec.collect_task_states()
+        states = spec.collect_fit_states()
         assert set(states) == {"mean_shift:y"}
 
     def test_load_restores_state(self):
-        # Fit on one spec, dump, load into a fresh spec.
         a = MeanShift()
         spec_a = Pipeline("p").add(a).build()
         list(spec_a.run(InMemorySource(_samples(6))))  # y=0..5 → mean=2.5
-        states = spec_a.collect_task_states()
+        states = spec_a.collect_fit_states()
 
         b = MeanShift()
         spec_b = Pipeline("p").add(b).build()
-        spec_b.load_task_states(states)
+        spec_b.load_fit_states(states)
         assert abs(b.mean - 2.5) < 1e-9
 
 
@@ -343,8 +395,6 @@ class TestTaskStates:
 
 
 class _FakeSource:
-    """Minimal object with a .source_id attribute + len + indexing."""
-
     def __init__(self, source_id: str, samples: list[dict] | None = None) -> None:
         self.source_id = source_id
         self._samples = samples or []
@@ -376,14 +426,23 @@ class TestCacheKey:
         b = spec.cache_key(_FakeSource("s"), extra={"n_train": "100"})
         assert a != b
 
-    def test_pipeline_id_affects_key(self):
+    def test_same_tasks_same_source_same_key(self):
+        """Same task chain + same source = same cache key (pipeline name doesn't matter)."""
         a = Pipeline("p1").add(CountingSample()).build().cache_key(_FakeSource("s"))
         b = Pipeline("p2").add(CountingSample()).build().cache_key(_FakeSource("s"))
-        assert a != b
+        assert a == b  # identical transforms → identical data → shared cache
+
+    def test_empty_pipeline_falls_back_to_source_based_key(self):
+        spec = Pipeline("p").build()
+        key = spec.cache_key(_FakeSource("s1"))
+        assert len(key) == 12
+        int(key, 16)
+        # Different source → different key even for empty pipeline
+        assert key != spec.cache_key(_FakeSource("s2"))
 
 
 # ---------------------------------------------------------------------------
-# build_cache — unconditional run + save
+# cache — DDP-aware per-node materialisation
 # ---------------------------------------------------------------------------
 
 
@@ -396,70 +455,97 @@ class _Tag(SampleTask):
         return {**data, "tagged": torch.tensor(1)}
 
 
-class TestBuildCache:
-    def test_runs_and_saves(self, tmp_path):
+class TestCache:
+    def test_cache_returns_dag_cache(self, tmp_path):
         spec = Pipeline("p").add(_Tag()).build()
-        sink = tmp_path / "x.pt"
-        cache = spec.build_cache(InMemorySource(_samples(4)), sink)
+        dag = spec.cache(InMemorySource(_samples(4)), base_dir=tmp_path)
+        assert isinstance(dag, DAGCache)
+        assert len(dag.node_caches) == 1
 
-        assert cache.sink == sink
-        loaded = cache.load()
-        assert len(loaded["samples"]) == 4
-        assert all("tagged" in s for s in loaded["samples"])
+    def test_dag_cache_final_dataset(self, tmp_path):
+        spec = Pipeline("p").add(_Tag()).build()
+        dag = spec.cache(InMemorySource(_samples(4)), base_dir=tmp_path)
+        ds = dag.dataset(mmap=True)
+        assert len(ds) == 4
+        assert all("tagged" in ds[i] for i in range(4))
+
+    def test_per_node_cache_files(self, tmp_path):
+        spec = Pipeline("p").add(_Tag()).add(MeanShift("y")).build()
+        dag = spec.cache(InMemorySource(_samples(4)), base_dir=tmp_path)
+        assert len(dag.node_caches) == 2
 
     def test_saves_task_states(self, tmp_path):
         shift = MeanShift("y")
         spec = Pipeline("p").add(shift).build()
-        sink = tmp_path / "x.pt"
-        spec.build_cache(InMemorySource(_samples(4)), sink)  # y=0..3 → mean=1.5
-
-        loaded = PackedCache(sink).load()
+        dag = spec.cache(InMemorySource(_samples(4)), base_dir=tmp_path)
+        payload = dag.final.load()
         assert torch.allclose(
-            loaded["task_states"]["mean_shift:y"]["mean"].double(),
+            payload["task_states"]["mean_shift:y"]["mean"].double(),
             torch.tensor(1.5, dtype=torch.float64),
             atol=1e-9,
         )
 
-    def test_fit_source_only_sees_subset(self, tmp_path):
-        """Regression for the scientific-correctness bug in the old materialize()."""
+    def test_fit_source_scopes_fit(self, tmp_path):
         shift = MeanShift("y")
         spec = Pipeline("p").add(shift).build()
-
-        # Full source y=0..9, fit_source y=0..4 → mean should be 2.0 not 4.5.
-        spec.build_cache(
+        # Full source y=0..9, fit_source y=0..4 → mean should be 2.0
+        dag = spec.cache(
             InMemorySource(_samples(10)),
-            tmp_path / "x.pt",
+            base_dir=tmp_path,
             fit_source=InMemorySource(_samples(5)),
         )
-        payload = PackedCache(tmp_path / "x.pt").load()
+        payload = dag.final.load()
         state = payload["task_states"]["mean_shift:y"]
         assert abs(float(state["mean"].item()) - 2.0) < 1e-9
 
-    def test_is_idempotent(self, tmp_path):
+    def test_cache_reuse(self, tmp_path):
         spec = Pipeline("p").add(_Tag()).build()
-        sink = tmp_path / "x.pt"
-        spec.build_cache(InMemorySource(_samples(2)), sink)
-        mtime = sink.stat().st_mtime_ns
-        spec.build_cache(InMemorySource(_samples(99)), sink)  # no-op
-        assert sink.stat().st_mtime_ns == mtime
+        dag1 = spec.cache(InMemorySource(_samples(2)), base_dir=tmp_path)
+        mtime = {n: dag1.node_caches[n].sink.stat().st_mtime_ns for n in dag1.node_caches}
+        dag2 = spec.cache(InMemorySource(_samples(2)), base_dir=tmp_path)
+        for n in dag1.node_caches:
+            assert dag2.node_caches[n].sink.stat().st_mtime_ns == mtime[n]
 
     def test_overwrite(self, tmp_path):
         spec = Pipeline("p").add(_Tag()).build()
-        sink = tmp_path / "x.pt"
-        spec.build_cache(InMemorySource(_samples(2)), sink)
-        spec.build_cache(InMemorySource(_samples(5)), sink, overwrite=True)
-        assert len(PackedCache(sink).load()["samples"]) == 5
+        dag1 = spec.cache(InMemorySource(_samples(2)), base_dir=tmp_path)
+        dag2 = spec.cache(InMemorySource(_samples(5)), base_dir=tmp_path, overwrite=True)
+        assert len(dag2.final.load()["samples"]) == 5
 
-    def test_accepts_packed_cache_argument(self, tmp_path):
+    def test_node_dataset(self, tmp_path):
+        spec = Pipeline("p").add(_Tag()).add(MeanShift("y")).build()
+        dag = spec.cache(InMemorySource(_samples(4)), base_dir=tmp_path)
+        tag_ds = dag.node_dataset("tag")
+        assert len(tag_ds) == 4
+        assert "tagged" in tag_ds[0]
+
+    def test_node_dataset_unknown_node(self, tmp_path):
         spec = Pipeline("p").add(_Tag()).build()
-        packed = PackedCache(tmp_path / "x.pt")
-        out = spec.build_cache(InMemorySource(_samples(3)), packed)
-        assert out is packed
-        assert len(out.load()["samples"]) == 3
+        dag = spec.cache(InMemorySource(_samples(2)), base_dir=tmp_path)
+        with pytest.raises(KeyError, match="unknown"):
+            dag.node_dataset("unknown")
+
+    def test_fit_states_skips_fit(self, tmp_path):
+        shift = MeanShift("y")
+        spec = Pipeline("p").add(shift).build()
+        states = {"mean_shift:y": {"mean": torch.tensor(99.0)}}
+        dag = spec.cache(InMemorySource(_samples(3)), base_dir=tmp_path, fit_states=states)
+        payload = dag.final.load()
+        assert abs(float(payload["task_states"]["mean_shift:y"]["mean"].item()) - 99.0) < 1e-9
+
+    def test_sink_filename_embeds_cache_key(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("RANK", "0")
+        spec = Pipeline("qm9").add(_Tag()).build()
+        src = _FakeSource("s", _samples(1))
+        dag = spec.cache(src, base_dir=tmp_path)
+        expected_key = spec.cache_key(src)
+        # Last prepare node's sink uses the final cache key
+        final_node = spec.prepare_nodes[-1]
+        assert dag.final.sink.name == f"qm9-{expected_key}.pt"
 
 
 # ---------------------------------------------------------------------------
-# cache — DDP-aware orchestration
+# cache — DDP rank handling
 # ---------------------------------------------------------------------------
 
 
@@ -468,29 +554,28 @@ class TestCacheDDP:
         monkeypatch.setenv("RANK", "0")
         spec = Pipeline("p").add(_Tag()).build()
         src = _FakeSource("s", _samples(3))
-        packed = spec.cache(src, base_dir=tmp_path)
-        assert packed.is_ready()
-        assert len(packed.load()["samples"]) == 3
+        dag = spec.cache(src, base_dir=tmp_path)
+        assert dag.final.is_ready()
+        assert len(dag.final.load()["samples"]) == 3
 
     def test_missing_rank_treated_as_primary(self, tmp_path, monkeypatch):
         monkeypatch.delenv("RANK", raising=False)
         spec = Pipeline("p").add(_Tag()).build()
         src = _FakeSource("s", _samples(2))
-        packed = spec.cache(src, base_dir=tmp_path)
-        assert packed.is_ready()
+        dag = spec.cache(src, base_dir=tmp_path)
+        assert dag.final.is_ready()
 
     def test_malformed_rank_treated_as_primary(self, tmp_path, monkeypatch):
         monkeypatch.setenv("RANK", "not-a-number")
         spec = Pipeline("p").add(_Tag()).build()
         src = _FakeSource("s", _samples(2))
-        packed = spec.cache(src, base_dir=tmp_path)
-        assert packed.is_ready()
+        dag = spec.cache(src, base_dir=tmp_path)
+        assert dag.final.is_ready()
 
     def test_non_primary_waits_and_raises_on_timeout(self, tmp_path, monkeypatch):
         monkeypatch.setenv("RANK", "1")
         spec = Pipeline("p").add(_Tag()).build()
         src = _FakeSource("s", _samples(1))
-        # Shrink PackedCache.wait_until_ready so the test runs fast.
         import molix.data.cache as cache_mod
 
         orig_wait = cache_mod.PackedCache.wait_until_ready
@@ -502,15 +587,7 @@ class TestCacheDDP:
         with pytest.raises(TimeoutError, match="Timed out"):
             spec.cache(src, base_dir=tmp_path)
 
-    def test_sink_filename_embeds_cache_key(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("RANK", "0")
-        spec = Pipeline("qm9").add(_Tag()).build()
-        src = _FakeSource("s", _samples(1))
-        packed = spec.cache(src, base_dir=tmp_path)
-        expected_key = spec.cache_key(src)
-        assert packed.sink.name == f"qm9-{expected_key}.pt"
-
-    def test_same_source_different_fit_source_different_sink(self, tmp_path, monkeypatch):
+    def test_different_fit_source_different_sinks(self, tmp_path, monkeypatch):
         monkeypatch.setenv("RANK", "0")
         spec = Pipeline("p").add(MeanShift("y")).build()
 
@@ -518,10 +595,33 @@ class TestCacheDDP:
         fit_a = _FakeSource("fit-a", _samples(5))
         fit_b = _FakeSource("fit-b", _samples(3))
 
-        packed_a = spec.cache(full, base_dir=tmp_path, fit_source=fit_a)
-        packed_b = spec.cache(full, base_dir=tmp_path, fit_source=fit_b)
-        assert packed_a.sink != packed_b.sink
-        mean_a = packed_a.load()["task_states"]["mean_shift:y"]["mean"].item()
-        mean_b = packed_b.load()["task_states"]["mean_shift:y"]["mean"].item()
-        assert abs(mean_a - 2.0) < 1e-9  # y=0..4 → mean=2
-        assert abs(mean_b - 1.0) < 1e-9  # y=0..2 → mean=1
+        dag_a = spec.cache(full, base_dir=tmp_path, fit_source=fit_a)
+        dag_b = spec.cache(full, base_dir=tmp_path, fit_source=fit_b)
+        assert dag_a.final.sink != dag_b.final.sink
+
+
+# ---------------------------------------------------------------------------
+# Edge derivation (key-based dependencies)
+# ---------------------------------------------------------------------------
+
+
+class TestEdges:
+    def test_linear_chain_without_reads_writes(self):
+        spec = Pipeline("p").add(CountingSample("a")).add(CountingSample("b")).build()
+        assert len(spec.edges) == 1
+        assert spec.edges[0].from_node == "counting:a"
+        assert spec.edges[0].to_node == "counting:b"
+
+    def test_no_edges_for_single_node(self):
+        spec = Pipeline("p").add(CountingSample()).build()
+        assert len(spec.edges) == 0
+
+    def test_key_based_edge_derivation(self):
+        spec = (
+            Pipeline("p")
+            .add(CountingSample("a"), writes={"edge_index", "bond_diff"})
+            .add(CountingSample("b"), reads={"edge_index"})
+            .build()
+        )
+        assert len(spec.edges) == 1
+        assert spec.edges[0].keys == frozenset({"edge_index"})

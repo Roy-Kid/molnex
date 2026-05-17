@@ -50,7 +50,6 @@ on-disk format.
 
 from __future__ import annotations
 
-import hashlib
 import os
 import time
 import uuid
@@ -62,8 +61,6 @@ import torch
 
 __all__ = ["PackedCache"]
 
-
-_KEY_HEX_LEN = 12
 
 # Reserved keys in the packed payload — never collide with user sample keys.
 _RESERVED_TOP_KEYS = frozenset(
@@ -88,9 +85,9 @@ class PackedCache:
     A :class:`PackedCache` is a thin OOP facade over a single ``.pt`` file:
     it owns readiness checks, atomic save, mmap-backed load, DDP-friendly
     polling, and per-sample unpacking. The cache is identified by its
-    *sink* path alone — identity hashing (pipeline + source fingerprint) is
-    handled by :meth:`PackedCache.make_key` and normally accessed through
-    :meth:`molix.data.pipeline.PipelineSpec.cache_key`.
+    *sink* path alone — identity hashing is handled by
+    :meth:`molix.data.pipeline.Node.cache_key` and normally accessed
+    through :meth:`molix.data.pipeline.PipelineSpec.cache_key`.
 
     On-disk layout is a **packed** representation: each sample key is
     concatenated across all samples into a single large tensor (per-atom,
@@ -122,34 +119,6 @@ class PackedCache:
 
     def __repr__(self) -> str:
         return f"PackedCache(sink={self._sink!s})"
-
-    @classmethod
-    def make_key(
-        cls,
-        *,
-        pipeline_id: str,
-        source_id: str,
-        fit_source_id: str | None = None,
-        extra: Mapping[str, str] | None = None,
-    ) -> str:
-        """Return a 12-hex SHA256 for the ``(pipeline, source, fit_source, extra)`` tuple.
-
-        Normally accessed through :meth:`PipelineSpec.cache_key` rather
-        than called directly. ``extra`` is a free-form dict for pinning
-        split sizes, seeds, dtype, etc. — changing any string invalidates
-        the cache.
-        """
-        fs_id = fit_source_id if fit_source_id is not None else source_id
-        parts = [
-            f"pipeline_id={pipeline_id}",
-            f"source_id={source_id}",
-            f"fit_source_id={fs_id}",
-        ]
-        if extra:
-            for k in sorted(extra):
-                parts.append(f"{k}={extra[k]}")
-        digest = hashlib.sha256("|".join(parts).encode()).hexdigest()
-        return digest[:_KEY_HEX_LEN]
 
     # -- readiness & DDP polling ------------------------------------------
 

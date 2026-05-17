@@ -38,7 +38,7 @@ from molix.data.dataset import (
 )
 
 # Pipeline DSL
-from molix.data.pipeline import Pipeline, PipelineSpec, TaskEntry
+from molix.data.pipeline import DAGCache, Edge, Node, Pipeline, PipelineSpec
 
 # Data sources
 from molix.data.source import DataSource, InMemorySource, SubsetSource
@@ -83,9 +83,11 @@ __all__ = [
     "InMemorySource",
     "SubsetSource",
     # Pipeline
+    "DAGCache",
+    "Edge",
+    "Node",
     "Pipeline",
     "PipelineSpec",
-    "TaskEntry",
     # Cache
     "PackedCache",
     # Dataset classes

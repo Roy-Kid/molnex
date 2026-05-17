@@ -85,7 +85,7 @@ class BatchTask(Task):
     molix ships no built-in :class:`BatchTask` subclass. The base class
     exists so custom post-collate transforms can be plugged into
     :meth:`Pipeline.add` and routed through
-    :attr:`~molix.data.pipeline.PipelineSpec.batch_tasks` to the
+    :attr:`~molix.data.pipeline.PipelineSpec.batch_nodes` to the
     :class:`~molix.data.datamodule._CollateFn`.
 
     Use this only when the transform **must** operate on the collated

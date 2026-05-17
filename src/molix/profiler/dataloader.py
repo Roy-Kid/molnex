@@ -154,7 +154,7 @@ class DataLoaderProfiler:
         persistent_workers: Keep workers alive between epochs.
         target_schema: How targets are collated into batches.
         pipeline: Optional :class:`~molix.data.pipeline.PipelineSpec` whose
-            ``batch_tasks`` are applied inside ``collate_fn``.
+            ``batch_nodes`` are applied inside ``collate_fn``.
 
     Example::
 
@@ -291,7 +291,7 @@ class DataLoaderProfiler:
         def collate_fn(batch_samples: list[dict]) -> object:
             batch = collate_molecules(batch_samples, schema)
             if pipeline is not None:
-                for entry in pipeline.batch_tasks:
+                for entry in pipeline.batch_nodes:
                     batch = entry.apply(batch)
             return batch
 

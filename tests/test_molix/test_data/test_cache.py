@@ -157,50 +157,9 @@ class TestWaitUntilReady:
 
 
 # ---------------------------------------------------------------------------
-# make_key — raw identity hashing
+# make_key removed — cache key derivation moved to Node.cache_key()
+# (tested in test_pipeline.py::TestNode / TestCacheKey)
 # ---------------------------------------------------------------------------
-
-
-class TestMakeKey:
-    def test_stable_across_calls(self):
-        a = PackedCache.make_key(pipeline_id="p", source_id="s")
-        b = PackedCache.make_key(pipeline_id="p", source_id="s")
-        assert a == b
-
-    def test_pipeline_id_changes_key(self):
-        a = PackedCache.make_key(pipeline_id="p1", source_id="s")
-        b = PackedCache.make_key(pipeline_id="p2", source_id="s")
-        assert a != b
-
-    def test_source_id_changes_key(self):
-        a = PackedCache.make_key(pipeline_id="p", source_id="s1")
-        b = PackedCache.make_key(pipeline_id="p", source_id="s2")
-        assert a != b
-
-    def test_fit_source_id_changes_key(self):
-        a = PackedCache.make_key(pipeline_id="p", source_id="s")
-        b = PackedCache.make_key(pipeline_id="p", source_id="s", fit_source_id="fit")
-        assert a != b
-
-    def test_fit_source_defaults_to_source(self):
-        a = PackedCache.make_key(pipeline_id="p", source_id="s")
-        b = PackedCache.make_key(pipeline_id="p", source_id="s", fit_source_id="s")
-        assert a == b
-
-    def test_extra_changes_key(self):
-        a = PackedCache.make_key(pipeline_id="p", source_id="s")
-        b = PackedCache.make_key(pipeline_id="p", source_id="s", extra={"impl": "v2"})
-        assert a != b
-
-    def test_extra_key_order_is_stable(self):
-        a = PackedCache.make_key(pipeline_id="p", source_id="s", extra={"a": "1", "b": "2"})
-        b = PackedCache.make_key(pipeline_id="p", source_id="s", extra={"b": "2", "a": "1"})
-        assert a == b
-
-    def test_return_is_short_hex(self):
-        k = PackedCache.make_key(pipeline_id="p", source_id="s")
-        assert len(k) == 12
-        int(k, 16)
 
 
 # ---------------------------------------------------------------------------

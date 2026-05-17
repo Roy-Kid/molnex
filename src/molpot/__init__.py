@@ -21,8 +21,17 @@ from molpot.composition import (
 # Physical derivation
 from molpot.derivation import EnergyAggregation, ForceDerivation, StressDerivation
 
+# PiNet prediction models
+from molpot.pinet_dipole import PiNetDipole
+from molpot.pinet_polarizability import PiNetPolarizability
+from molpot.pinet_potential import PiNetPotential
+
 # Prediction heads
-from molpot.heads import AtomicEnergyMLP, EnergyHead, TypeHead
+from molpot.heads import (
+    AtomicEnergyMLP,
+    EnergyHead,
+    TypeHead,
+)
 
 # Pooling
 from molpot.pooling import (
@@ -63,6 +72,10 @@ __all__ = [
     "AtomicEnergyMLP",
     "EnergyHead",
     "TypeHead",
+    # PiNet prediction models
+    "PiNetDipole",
+    "PiNetPolarizability",
+    "PiNetPotential",
     # Derivation
     "EnergyAggregation",
     "ForceDerivation",
