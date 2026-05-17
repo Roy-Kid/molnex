@@ -1,7 +1,8 @@
 ---
 title: C++ AOT 模型运行时库
-status: approved
+status: done
 created: 2026-05-14
+completed: 2026-05-17
 ---
 
 # C++ AOT 模型运行时库
@@ -92,11 +93,11 @@ public:
 
 ## 任务
 
-- [ ] Write C++ `ModelRunner` header `interface/include/molnex/interface/model_runner.h`
-- [ ] Write C++ `ModelRunner` implementation `interface/src/model_runner.cpp`
-- [ ] Write C++ tests `interface/tests/test_model_runner.cpp` + CMakeLists.txt
-- [ ] Set up build: `interface/CMakeLists.txt` + update top-level `CMakeLists.txt`
-- [ ] Build and run C++ test suite
+- [x] Write C++ `ModelRunner` header `interface/include/molnex/interface/model_runner.h`
+- [x] Write C++ `ModelRunner` implementation `interface/src/model_runner.cpp`
+- [x] Write C++ tests `interface/tests/test_model_runner.cpp` + CMakeLists.txt
+- [x] Set up build: `interface/CMakeLists.txt` + update top-level `CMakeLists.txt`
+- [x] Build and run C++ test suite
 
 ## 测试策略
 
