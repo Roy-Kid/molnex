@@ -110,9 +110,7 @@ def define_crystal(crystal_name="CsCl", dtype=None, device=None):
     elif crystal_name == "fluorite":
         a = 5.463
         a = 1.0
-        positions = a * torch.tensor(
-            [[1 / 4, 1 / 4, 1 / 4], [3 / 4, 3 / 4, 3 / 4], [0, 0, 0]]
-        )
+        positions = a * torch.tensor([[1 / 4, 1 / 4, 1 / 4], [3 / 4, 3 / 4, 3 / 4], [0, 0, 0]])
         charges = torch.tensor([-1, -1, 2])
         cell = torch.tensor([[a, a, 0], [a, 0, a], [0, a, a]]) / 2.0
         madelung_ref = 11.6365752270768
@@ -171,9 +169,7 @@ def define_crystal(crystal_name="CsCl", dtype=None, device=None):
         # Reference value is expressed in terms of the Wigner-Seiz radius, and needs to
         # be rescaled to the case in which the lattice parameter = 1.
         madelung_wigner_seiz = 1.791860
-        wigner_seiz_radius = (3 / (4 * torch.pi * 2)) ** (
-            1 / 3
-        )  # 2 atoms per cubic unit cell
+        wigner_seiz_radius = (3 / (4 * torch.pi * 2)) ** (1 / 3)  # 2 atoms per cubic unit cell
         madelung_ref = madelung_wigner_seiz / wigner_seiz_radius  # 3.63924
         num_formula_units = 1
 
@@ -186,9 +182,7 @@ def define_crystal(crystal_name="CsCl", dtype=None, device=None):
         # Reference value is expressed in terms of the Wigner-Seiz radius, and needs to
         # be rescaled to the case in which the lattice parameter = 1.
         madelung_wigner_seiz = 1.791860
-        wigner_seiz_radius = (3 / (4 * torch.pi * 2)) ** (
-            1 / 3
-        )  # 2 atoms per cubic unit cell
+        wigner_seiz_radius = (3 / (4 * torch.pi * 2)) ** (1 / 3)  # 2 atoms per cubic unit cell
         madelung_ref = madelung_wigner_seiz / wigner_seiz_radius  # 3.63924
         num_formula_units = 2
 
@@ -203,9 +197,7 @@ def define_crystal(crystal_name="CsCl", dtype=None, device=None):
         # Reference value is expressed in terms of the Wigner-Seiz radius, and needs to
         # be rescaled to the case in which the lattice parameter = 1.
         madelung_wigner_seiz = 1.791753
-        wigner_seiz_radius = (3 / (4 * torch.pi * 4)) ** (
-            1 / 3
-        )  # 4 atoms per cubic unit cell
+        wigner_seiz_radius = (3 / (4 * torch.pi * 4)) ** (1 / 3)  # 4 atoms per cubic unit cell
         madelung_ref = madelung_wigner_seiz / wigner_seiz_radius  # 4.58488
         num_formula_units = 1
 
@@ -218,9 +210,7 @@ def define_crystal(crystal_name="CsCl", dtype=None, device=None):
         # Reference value is expressed in terms of the Wigner-Seiz radius, and needs to
         # be rescaled to the case in which the lattice parameter = 1.
         madelung_wigner_seiz = 1.791753
-        wigner_seiz_radius = (3 / (4 * torch.pi * 4)) ** (
-            1 / 3
-        )  # 4 atoms per cubic unit cell
+        wigner_seiz_radius = (3 / (4 * torch.pi * 4)) ** (1 / 3)  # 4 atoms per cubic unit cell
         madelung_ref = madelung_wigner_seiz / wigner_seiz_radius  # 4.58488
         num_formula_units = 4
 

@@ -76,4 +76,4 @@ def set_precision(mode: str) -> None:
     preset = _PRECISION_PRESETS[mode]
     for key, value in preset.items():
         config[key] = value
-    torch.set_float32_matmul_precision(preset["matmul_precision"])
+    torch.set_float32_matmul_precision(str(preset["matmul_precision"]))

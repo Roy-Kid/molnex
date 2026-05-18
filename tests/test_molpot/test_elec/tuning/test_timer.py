@@ -4,11 +4,11 @@ from pathlib import Path
 import ase
 import torch
 
-from molpot.elec import (
+from molpot.potentials.elec import (
     CoulombPotential,
     EwaldCalculator,
 )
-from molpot.elec.tuning.tuner import TuningTimings
+from molpot.potentials.elec.tuning.tuner import TuningTimings
 
 sys.path.append(str(Path(__file__).parents[1]))
 from helpers import define_crystal, neighbor_list

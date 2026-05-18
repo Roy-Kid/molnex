@@ -21,7 +21,7 @@ def batch_to_device(
 ) -> Any:
     """Move a batch to the target device.
 
-    Handles TensorDict/GraphBatch (via ``.to()``), plain dicts (recursive),
+    Handles TensorDict (via ``.to()``), plain dicts (recursive),
     and bare tensors. Non-tensor leaves are returned unchanged.
 
     Args:

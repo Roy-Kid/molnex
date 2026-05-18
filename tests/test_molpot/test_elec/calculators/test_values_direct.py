@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from molpot.elec import Calculator, CoulombPotential
+from molpot.potentials.elec import Calculator, CoulombPotential
 
 sys.path.append(str(Path(__file__).parents[1]))
 from helpers import neighbor_list

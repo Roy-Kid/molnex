@@ -14,7 +14,7 @@ from molpot.potentials.angles import AngleHarmonic
 from molpot.potentials.base import BasePotential
 from molpot.potentials.bonds import BondHarmonic
 from molpot.potentials.dihedrals import DihedralHarmonic
-from molpot.potentials.electrostatics import (
+from molpot.potentials.elec import (
     EwaldMultipoleEnergy,
     EwaldMultipoleEnergySpec,
 )

@@ -28,7 +28,10 @@ def _graph(total_charge: float = 0.0):
     )
     batch = torch.zeros(4, dtype=torch.long)
     return make_graph_batch(
-        pos, z, edge_index, batch,
+        pos,
+        z,
+        edge_index,
+        batch,
         graphs={"total_charge": torch.tensor([total_charge], dtype=torch.float32)},
     )
 

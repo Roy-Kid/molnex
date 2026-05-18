@@ -58,14 +58,6 @@ from molix.data.tasks import (
     UnitConvert,
 )
 
-# Types
-from molix.data.types import (
-    AtomData,
-    EdgeData,
-    GraphBatch,
-    GraphData,
-)
-
 __all__ = [
     # Task hierarchy
     "Task",
@@ -102,9 +94,4 @@ __all__ = [
     "collate_molecules",
     "TargetSchema",
     "DEFAULT_TARGET_SCHEMA",
-    # Types
-    "AtomData",
-    "EdgeData",
-    "GraphData",
-    "GraphBatch",
 ]

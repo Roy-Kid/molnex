@@ -36,10 +36,10 @@ import torch
 import torch.nn as nn
 from cuequivariance import O3, Irreps
 from pydantic import BaseModel, ConfigDict, Field
+from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase
 
 from molix import config
-from molix.data.types import GraphBatch
 from molrep.embedding.angular import SphericalHarmonics
 from molrep.embedding.cutoff import CosineCutoff
 from molrep.embedding.node import (
@@ -345,13 +345,13 @@ class InteractionBlock(nn.Module):
 class MACE(TensorDictModuleBase):
     """MACE equivariant feature encoder.
 
-    Accepts a ``GraphBatch`` TensorDict and writes ``node_features``
+    Accepts a ``TensorDict`` TensorDict and writes ``node_features``
     into the ``atoms`` sub-dict in place, returning the same
-    ``GraphBatch`` with the new key added.
+    ``TensorDict`` with the new key added.
 
     Architecture::
 
-        GraphBatch(atoms, edges)
+        TensorDict(atoms, edges)
           → [Embedding] → node_feats, edge_attrs, edge_feats
           → [Interaction₁] → [ProductHead₁] → [ElementUpdate₁]
           → ...
@@ -484,14 +484,14 @@ class MACE(TensorDictModuleBase):
             ]
         )
 
-    def forward(self, td: GraphBatch) -> GraphBatch:
+    def forward(self, td: TensorDict) -> TensorDict:
         """Extract per-layer geometric features.
 
         Args:
-            td: ``GraphBatch`` with ``atoms`` and ``edges`` sub-dicts.
+            td: ``TensorDict`` with ``atoms`` and ``edges`` sub-dicts.
 
         Returns:
-            Same ``GraphBatch`` with ``atoms.node_features``
+            Same ``TensorDict`` with ``atoms.node_features``
             ``(n_nodes, num_interactions, num_features)`` added.
         """
         Z = td["atoms", "Z"]

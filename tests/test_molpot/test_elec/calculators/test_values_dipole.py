@@ -5,8 +5,8 @@ import pytest
 import torch
 from ase.io import read
 
-from molpot.elec import CalculatorDipole, PotentialDipole
-from molpot.elec.prefactors import eV_A
+from molpot.potentials.elec import CalculatorDipole, PotentialDipole
+from molpot.potentials.elec.prefactors import eV_A
 
 sys.path.append(str(Path(__file__).parents[1]))
 from helpers import (
@@ -44,9 +44,7 @@ class TestDipoles:
             dtype=dtype,
             device=device,
         )
-        neighbor_indices = torch.tensor(
-            [[0, 1], [1, 2], [0, 2]], dtype=torch.int64, device=device
-        )
+        neighbor_indices = torch.tensor([[0, 1], [1, 2], [0, 2]], dtype=torch.int64, device=device)
         neighbor_vectors = torch.tensor(
             [[0.0, 2.0, 0.0], [0.0, 2.0, 0.0], [0.0, 4.0, 0.0]],
             dtype=dtype,
@@ -65,9 +63,7 @@ class TestDipoles:
         dipoles = self.parallel_dipoles(device=device, dtype=dtype)[0]
         result = (pot * dipoles).sum()
         print(result)
-        expected_result = torch.tensor(
-            -0.265625, dtype=dtype, device=device
-        )  # analytical result
+        expected_result = torch.tensor(-0.265625, dtype=dtype, device=device)  # analytical result
         torch.testing.assert_close(result, expected_result)
 
     @pytest.mark.parametrize(
@@ -76,7 +72,7 @@ class TestDipoles:
             (
                 1e10,
                 torch.tensor(-0.265625),
-            ),  # analytical result, should coinside with the direct calculation when smearing -> inf
+            ),  # direct-calculation limit as smearing -> inf
             (1e-10, torch.tensor(0.0000)),  # should be zero when smearing -> 0
         ],
     )
@@ -98,9 +94,7 @@ class TestDipoles:
 
     def test_magnetostatic_ewald(self, device, dtype):
         alpha = 1.0
-        smearing = (
-            1 / (2 * alpha**2)
-        ) ** 0.5  # convert espressomd alpha to torch-pme smearing
+        smearing = (1 / (2 * alpha**2)) ** 0.5  # convert espressomd alpha to torch-pme smearing
         calculator = CalculatorDipole(
             potential=PotentialDipole(smearing=smearing),
             full_neighbor_list=False,
@@ -119,12 +113,8 @@ class TestDipoles:
         ("frame", "cutoff", "alpha", "energy", "force"),
         zip(frames, cutoffs, alphas, energies, forces),
     )
-    def test_magnetostatic_ewald_crystal(
-        self, frame, cutoff, alpha, energy, force, device, dtype
-    ):
-        smearing = (
-            1 / (2 * alpha**2)
-        ) ** 0.5  # convert espressomd alpha to torch-pme smearing
+    def test_magnetostatic_ewald_crystal(self, frame, cutoff, alpha, energy, force, device, dtype):
+        smearing = (1 / (2 * alpha**2)) ** 0.5  # convert espressomd alpha to torch-pme smearing
         calc = CalculatorDipole(
             potential=PotentialDipole(smearing=smearing, prefactor=eV_A),
             full_neighbor_list=False,

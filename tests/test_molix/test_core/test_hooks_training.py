@@ -29,8 +29,8 @@ class SimpleModel(nn.Module):
         super().__init__()
         self.linear = nn.Linear(10, 1)
 
-    def forward(self, x, **_kwargs):
-        return self.linear(x)
+    def forward(self, batch):
+        return self.linear(batch["x"])
 
 
 class TwoLayerModel(nn.Module):
@@ -41,8 +41,8 @@ class TwoLayerModel(nn.Module):
         self.layer1 = nn.Linear(10, 10)
         self.layer2 = nn.Linear(10, 1)
 
-    def forward(self, x, **_kwargs):
-        return self.layer2(torch.relu(self.layer1(x)))
+    def forward(self, batch):
+        return self.layer2(torch.relu(self.layer1(batch["x"])))
 
 
 def simple_loss_fn(predictions, batch):
@@ -216,11 +216,11 @@ def test_activation_checkpointing_numerical_equivalence():
     torch.manual_seed(42)
     model = TwoLayerModel()
 
-    x = torch.randn(5, 10)
+    batch = {"x": torch.randn(5, 10)}
 
     # Get reference output before checkpointing
     with torch.no_grad():
-        ref_output = model(x).clone()
+        ref_output = model(batch).clone()
 
     # Apply checkpointing
     hook = ActivationCheckpointingHook(
@@ -233,7 +233,7 @@ def test_activation_checkpointing_numerical_equivalence():
 
     # Get checkpointed output
     with torch.no_grad():
-        ckpt_output = model(x)
+        ckpt_output = model(batch)
 
     torch.testing.assert_close(ref_output, ckpt_output)
 
@@ -250,8 +250,7 @@ def test_activation_checkpointing_gradient_flow():
         TrainState(),
     )
 
-    x = torch.randn(5, 10)
-    output = model(x)
+    output = model({"x": torch.randn(5, 10)})
     loss = output.sum()
     loss.backward()
 

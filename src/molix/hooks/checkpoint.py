@@ -90,13 +90,18 @@ class CheckpointHook(BaseHook):
             ckpt.best_metric_name = self.best_metric_name
 
     def on_train_batch_end(self, trainer, state, batch, outputs):
-        """Write step-indexed periodic snapshot."""
+        """Write step-indexed periodic snapshot.
+
+        ``on_train_batch_end`` fires *before* the trainer increments
+        ``global_step``; the logical step that this batch represents is
+        therefore ``global_step + 1`` (matches :class:`Log`'s convention).
+        """
         if self.save_every_n_steps <= 0:
             return
-        step = int(state.get("global_step", 0))
-        if step <= 0 or step % self.save_every_n_steps != 0:
+        step = int(state.get("global_step", 0)) + 1
+        if step % self.save_every_n_steps != 0:
             return
-        self._save_checkpoint(trainer, state, f"step_{step}.pt")
+        self._save_checkpoint(trainer, state, f"step_{step}.pt", step=step)
 
     def on_eval_step_complete(self, trainer, state):
         """Refresh ``last.pt`` / ``best.pt`` against the just-finished eval."""
@@ -106,9 +111,22 @@ class CheckpointHook(BaseHook):
             self._save_checkpoint(trainer, state, "last.pt")
 
     def on_train_end(self, trainer, state):
-        """Always write a final ``last.pt`` so the run is resumable."""
-        if self.save_last:
-            self._save_checkpoint(trainer, state, "last.pt")
+        """Always write a final ``last.pt`` so the run is resumable.
+
+        If an eval-driven ``last.pt`` was already written at this same
+        ``global_step``, the file's counters (``epoch`` in particular) are
+        stale by one because ``state.increment_epoch()`` ran in between.
+        Silently rewrite the file in that case so the on-disk payload
+        matches the post-training state, but skip the announce so the
+        eval+train_end pair still reads as a single event.
+        """
+        if not self.save_last:
+            return
+        step = int(state.get("global_step", 0))
+        if self._last_announced == ("last.pt", step):
+            self._rewrite_checkpoint(trainer, state, "last.pt")
+            return
+        self._save_checkpoint(trainer, state, "last.pt")
 
     def _is_improvement(self, candidate: float) -> bool:
         if self._best_value is None:
@@ -149,14 +167,29 @@ class CheckpointHook(BaseHook):
             sd["optimizer_state_dict"] = trainer.optimizer.state_dict()
         return sd
 
-    def _save_checkpoint(self, trainer, state, filename):
+    def _rewrite_checkpoint(self, trainer, state, filename):
+        """Overwrite ``filename`` with the current state — no announce, no dedupe.
+
+        Used by :meth:`on_train_end` to refresh a same-step ``last.pt``
+        whose counters drifted after ``state.increment_epoch()``.
+        """
+        filepath = self.os.path.join(self.checkpoint_dir, filename)
+        checkpoint = self._build_state_dict(trainer, state)
+        self.torch.save(checkpoint, filepath)
+        logger.info(f"Refreshed checkpoint at {filepath}")
+
+    def _save_checkpoint(self, trainer, state, filename, *, step: int | None = None):
         """Save checkpoint to disk; dedupe redundant writes + announces.
 
         Two triggers can fire at the same step (e.g. ``on_eval_step_complete``
         and ``on_train_end`` at end-of-training). The marker check skips
-        both the redundant ``torch.save`` and the announce.
+        both the redundant ``torch.save`` and the announce. ``step``
+        overrides the value read from ``state`` — needed by
+        :meth:`on_train_batch_end` which fires before the trainer
+        increments ``global_step``.
         """
-        step = int(state.get("global_step", 0))
+        if step is None:
+            step = int(state.get("global_step", 0))
         marker = (filename, step)
         if self._last_announced == marker:
             return

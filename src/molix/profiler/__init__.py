@@ -17,7 +17,7 @@ Three profilers, each targeting a single component:
 Two data generators for use when no real dataset is available:
 
 - :class:`MockBatch` — callable that produces a
-  :class:`~molix.data.types.GraphBatch` with configurable (optionally random)
+  ``TensorDict`` with configurable (optionally random)
   atom / edge / graph counts.
 
 - :class:`MockSource` — :class:`~molix.data.source.DataSource` returning
@@ -33,7 +33,7 @@ Typical workflow::
     result = profiler.run(MockSource(n_samples=500, n_atoms=(5, 20)), n_samples=100)
     result.print_report()
 
-    # Profile a model with a mock batch factory (GraphBatch modules)
+    # Profile a model with a mock batch factory (TensorDict modules)
     from molix.profiler import ModuleProfiler, MockBatch
 
     profiler = ModuleProfiler(encoder, loss_fn=my_loss, device="cuda:0")

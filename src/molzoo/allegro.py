@@ -45,10 +45,10 @@ import torch
 import torch.nn as nn
 from cuequivariance import O3
 from pydantic import BaseModel, ConfigDict, Field
+from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase
 
 from molix import config
-from molix.data.types import GraphBatch
 from molrep.embedding.angular import SphericalHarmonics
 from molrep.embedding.cutoff import PolynomialCutoff
 from molrep.embedding.mlp import ScalarMLPFunction
@@ -315,7 +315,7 @@ class AllegroSpec(BaseModel):
 class Allegro(TensorDictModuleBase):
     """Faithful port of mir-group/allegro encoder.
 
-    Inputs (read from ``GraphBatch``):
+    Inputs (read from ``TensorDict``):
 
     * ``("atoms","Z")`` — atomic numbers ``(N,)``.
     * ``("edges","edge_index")`` — ``(E, 2)``, ``[:,0]=src/center``.
@@ -552,7 +552,7 @@ class Allegro(TensorDictModuleBase):
         # Final output dim (DenseNet stack of all scalar layers).
         self.output_dim: int = num_scalar_features * (num_layers + 1)
 
-    def forward(self, td: GraphBatch) -> GraphBatch:
+    def forward(self, td: TensorDict) -> TensorDict:
         """Run the encoder and write ``("edges","edge_features")`` in place."""
         Z = td["atoms", "Z"]
         bond_dist = td["edges", "bond_dist"]

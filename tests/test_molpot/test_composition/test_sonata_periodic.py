@@ -9,7 +9,7 @@ covers one acceptance criterion:
 * ac-009 — autograd stress matches central FD to relative ≤ 1e-5,
   ``dh = 1e-4``, on a differentiable strain ``ε``.
 
-The force / stress tests use ``GraphBatch`` clones constructed inside
+The force / stress tests use ``TensorDict`` clones constructed inside
 the test loop; positions / cells are perturbed and ``bond_diff /
 bond_dist`` are recomputed exactly the way ``Sonata.forward`` does it
 internally, so the FD path samples the same ``E(pos, cell)`` surface
@@ -47,9 +47,9 @@ import importlib.util
 
 import pytest
 import torch
+from tensordict import TensorDict
 
 from molix.config import config
-from molix.data.types import AtomData, EdgeData, GraphBatch, GraphData
 from molpot.composition import Sonata, build_sonata
 from molzoo import Allegro
 
@@ -87,8 +87,8 @@ def _build_graph_batch(
     total_charge: torch.Tensor,
     cell: torch.Tensor | None = None,
     minimum_image: bool = False,
-) -> GraphBatch:
-    """Build a ``GraphBatch`` from positions, optionally applying minimum-image
+) -> TensorDict:
+    """Build a ``TensorDict`` from positions, optionally applying minimum-image
     convention to the edge geometry for orthorhombic ``cell`` inputs."""
     bond_diff = pos[edge_index[:, 1]] - pos[edge_index[:, 0]]
     if minimum_image and cell is not None:
@@ -113,15 +113,15 @@ def _build_graph_batch(
     if cell is not None:
         graphs_kwargs["cell"] = cell
 
-    return GraphBatch(
-        atoms=AtomData(Z=Z, pos=pos, batch=batch_idx, batch_size=[n_atoms]),
-        edges=EdgeData(
+    return TensorDict(
+        atoms=TensorDict(Z=Z, pos=pos, batch=batch_idx, batch_size=[n_atoms]),
+        edges=TensorDict(
             edge_index=edge_index,
             bond_diff=bond_diff,
             bond_dist=bond_dist,
             batch_size=[n_edges],
         ),
-        graphs=GraphData(**graphs_kwargs),
+        graphs=TensorDict(**graphs_kwargs),
         batch_size=[],
     )
 
@@ -132,7 +132,7 @@ def _build_graph_batch(
 
 
 @pytest.fixture(scope="module")
-def single_graph_periodic() -> tuple[Sonata, GraphBatch]:
+def single_graph_periodic() -> tuple[Sonata, TensorDict]:
     """One-graph periodic batch (4 atoms, cubic 10 Å cell) and a fresh
     float64 Sonata pipeline.
 
@@ -219,7 +219,7 @@ class TestCellPeriodicConsistency:
     """
 
     def test_cell_periodic_atom0_shift(
-        self, sonata_pipeline: Sonata, sample_neutral_batch_periodic: GraphBatch
+        self, sonata_pipeline: Sonata, sample_neutral_batch_periodic: TensorDict
     ) -> None:
         # Reconstruct the periodic batch with MI bond_diff so the test
         # is consistent with itself before/after the shift.
@@ -292,7 +292,7 @@ class TestForceFD:
 
     @_REQUIRES_CUE_OPS
     def test_force_fd_periodic_strict(
-        self, sonata_pipeline: Sonata, sample_neutral_batch_periodic: GraphBatch
+        self, sonata_pipeline: Sonata, sample_neutral_batch_periodic: TensorDict
     ) -> None:
         """Strict autograd-vs-FD on full Sonata pipeline (≤ 1e-5).
 
@@ -361,7 +361,7 @@ class TestForceFD:
         assert max_err < 1e-5, f"max |F_auto - F_fd| = {max_err:.3e} eV/Å (target ≤ 1e-5)"
 
     def test_force_autograd_finite_and_shape(
-        self, sonata_pipeline: Sonata, sample_neutral_batch_periodic: GraphBatch
+        self, sonata_pipeline: Sonata, sample_neutral_batch_periodic: TensorDict
     ) -> None:
         """Non-strict sanity: autograd forces are finite, shaped right.
 

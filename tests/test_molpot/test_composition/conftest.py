@@ -2,7 +2,7 @@
 
 This conftest provides one float64 ``Sonata`` pipeline (Allegro encoder +
 ``PermMultipoleHead`` + ``EwaldMultipoleEnergy``), three deterministic
-``GraphBatch`` samples (free / periodic / charged-periodic), a callable
+``TensorDict`` samples (free / periodic / charged-periodic), a callable
 SO(3) random-rotation factory, and a callable random-traceless-quadrupole
 factory. All tensors are float64 — the algebraic-identity tolerances
 (1e-10 / 1e-12) the suite asserts are below float32 ULP at the eV scale.
@@ -28,9 +28,9 @@ from collections.abc import Callable
 
 import pytest
 import torch
+from tensordict import TensorDict
 
 from molix.config import config
-from molix.data.types import AtomData, EdgeData, GraphBatch, GraphData
 from molpot.composition import Sonata, build_sonata
 from molzoo import Allegro
 
@@ -64,8 +64,8 @@ def _make_batch_fp64(
     batch_idx: torch.Tensor,
     total_charge: torch.Tensor,
     cell: torch.Tensor | None = None,
-) -> GraphBatch:
-    """Assemble a float64 ``GraphBatch`` with per-graph ``total_charge``."""
+) -> TensorDict:
+    """Assemble a float64 ``TensorDict`` with per-graph ``total_charge``."""
     bond_diff = pos[edge_index[:, 1]] - pos[edge_index[:, 0]]
     bond_dist = bond_diff.norm(dim=-1)
     n_atoms = pos.shape[0]
@@ -83,15 +83,15 @@ def _make_batch_fp64(
     if cell is not None:
         graphs_kwargs["cell"] = cell
 
-    return GraphBatch(
-        atoms=AtomData(Z=Z, pos=pos, batch=batch_idx, batch_size=[n_atoms]),
-        edges=EdgeData(
+    return TensorDict(
+        atoms=TensorDict(Z=Z, pos=pos, batch=batch_idx, batch_size=[n_atoms]),
+        edges=TensorDict(
             edge_index=edge_index,
             bond_diff=bond_diff,
             bond_dist=bond_dist,
             batch_size=[n_edges],
         ),
-        graphs=GraphData(**graphs_kwargs),
+        graphs=TensorDict(**graphs_kwargs),
         batch_size=[],
     )
 
@@ -181,7 +181,7 @@ def _two_graph_pos_Z(seed: int = 0) -> tuple[torch.Tensor, torch.Tensor, torch.T
 
 
 @pytest.fixture
-def sample_neutral_batch_open() -> GraphBatch:
+def sample_neutral_batch_open() -> TensorDict:
     """Two 4-atom graphs, no cell, total_charge = 0 per graph."""
     pos, Z, batch_idx = _two_graph_pos_Z(seed=0)
     edge_index = _full_bidirectional_edges([(0, 4), (4, 4)])
@@ -197,7 +197,7 @@ def sample_neutral_batch_open() -> GraphBatch:
 
 
 @pytest.fixture
-def sample_neutral_batch_periodic() -> GraphBatch:
+def sample_neutral_batch_periodic() -> TensorDict:
     """Two 4-atom graphs, cubic cells (L = 10 Å each), total_charge = 0."""
     pos, Z, batch_idx = _two_graph_pos_Z(seed=0)
     edge_index = _full_bidirectional_edges([(0, 4), (4, 4)])
@@ -214,7 +214,7 @@ def sample_neutral_batch_periodic() -> GraphBatch:
 
 
 @pytest.fixture
-def sample_charged_batch_periodic() -> GraphBatch:
+def sample_charged_batch_periodic() -> TensorDict:
     """Two 4-atom graphs, cubic cells, distinct non-zero per-graph total_charge.
 
     Graph 0 carries ``+1 e``; graph 1 carries ``-2 e``. Charges are real-

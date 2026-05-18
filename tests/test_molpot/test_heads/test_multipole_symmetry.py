@@ -34,7 +34,7 @@ those symmetries are independent of the irrep order.
 
 The graph-transform helpers come from ``tests.symmetry_helpers`` so the
 encoder-only and pipeline tests share one definition of "translate / rotate
-/ permute a GraphBatch".
+/ permute a TensorDict".
 """
 
 from __future__ import annotations
@@ -46,8 +46,8 @@ import cuequivariance_torch as cuet
 import pytest
 import torch
 import torch.nn as nn
+from tensordict import TensorDict
 
-from molix.data.types import GraphBatch
 from molpot.heads import PermMultipoleHead
 from molrep.utils.equivariance import random_rotation_matrix, rotate_vectors
 from molzoo import Allegro
@@ -118,7 +118,7 @@ _EULER_CASES = (
 
 
 @pytest.fixture
-def small_molecule_neutral() -> GraphBatch:
+def small_molecule_neutral() -> TensorDict:
     """5-atom chain, two molecules (3+2), each with ``total_charge=0``."""
     torch.manual_seed(42)
     pos = torch.tensor(
@@ -235,7 +235,7 @@ class _PipelineModule(nn.Module):
         self.encoder = encoder
         self.head = head
 
-    def forward(self, batch: GraphBatch) -> dict[str, torch.Tensor]:
+    def forward(self, batch: TensorDict) -> dict[str, torch.Tensor]:
         recompute_edge_geometry(batch)
         batch = self.encoder(batch)
         return self.head(batch)

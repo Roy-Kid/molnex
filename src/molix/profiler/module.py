@@ -157,7 +157,7 @@ def _move_to_device(batch: object, device: torch.device) -> object:
 
 
 def _extract_counts(batch: object) -> tuple[int, int]:
-    """Extract (n_atoms, n_graphs) from a GraphBatch; returns (0, 0) on failure."""
+    """Extract (n_atoms, n_graphs) from a TensorDict batch; returns (0, 0) on failure."""
     try:
         n_atoms = int(batch["atoms"]["Z"].shape[0])  # type: ignore[index]
         n_graphs = int(batch["graphs"]["num_atoms"].shape[0])  # type: ignore[index]
@@ -253,7 +253,7 @@ class ModuleProfiler:
     ) -> ModuleResult:
         """Profile using explicit forward/backward callables.
 
-        Use this when the module does not accept a :class:`~molix.data.types.GraphBatch`
+        Use this when the module does not accept a ``TensorDict`` batch
         — i.e. for sub-modules that take raw tensors or other inputs.
 
         The forward and backward callables are timed separately so you still

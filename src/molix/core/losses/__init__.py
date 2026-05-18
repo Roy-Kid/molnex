@@ -5,7 +5,7 @@ Generic tensor-level losses:
 - ``MAELoss``: Mean absolute error (L1) loss
 - ``WeightedLoss``: Weighted combination of multiple losses
 
-Molecular-ML presets (``GraphBatch``-aware closures):
+Molecular-ML presets (``TensorDict``-aware closures):
 - ``energy_mse(target_key)``: MSE on graph-level ``energy`` vs
   ``batch["graphs", target_key]``.
 - ``energy_force_mse(lambda_F=...)``: joint energy + forces MSE.

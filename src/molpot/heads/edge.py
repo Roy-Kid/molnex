@@ -38,8 +38,8 @@ import math
 
 import torch
 import torch.nn as nn
+from tensordict import TensorDict
 
-from molix.data.types import GraphBatch
 from molrep.embedding.mlp import ScalarMLPFunction
 
 
@@ -87,11 +87,11 @@ class EdgeEnergyHead(nn.Module):
         self._inv_sqrt_2 = 1.0 / math.sqrt(2.0)
         self.out_key = out_key
 
-    def forward(self, batch: GraphBatch) -> dict[str, torch.Tensor]:
+    def forward(self, batch: TensorDict) -> dict[str, torch.Tensor]:
         """Aggregate edge features to per-graph energies.
 
         Args:
-            batch: ``GraphBatch`` with ``edges.edge_features`` of shape
+            batch: ``TensorDict`` with ``edges.edge_features`` of shape
                 ``(E, F·(L+1))`` (the Allegro DenseNet stack), plus
                 ``edges.edge_index``, ``atoms.Z``, ``atoms.batch``, and
                 a ``graphs`` subdict that carries the per-graph batch size.

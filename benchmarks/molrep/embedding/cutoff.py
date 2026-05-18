@@ -6,7 +6,6 @@ import torch._dynamo
 
 from molrep.embedding.cutoff import CosineCutoff, PolynomialCutoff
 
-
 # --- CosineCutoff ---
 
 

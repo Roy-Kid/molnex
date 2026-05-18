@@ -4,7 +4,7 @@ from scipy.special import expi
 from torch.special import erf, erfc
 from torch.testing import assert_close
 
-from molpot.elec import (
+from molpot.potentials.elec import (
     CombinedPotential,
     CoulombPotential,
     InversePowerLawPotential,
@@ -281,18 +281,14 @@ def test_no_impl():
 @pytest.mark.parametrize("exclusion_radius", [0.5, 1.0, 2.0])
 def test_f_cutoff(exclusion_radius):
     exclusion_degree = 10
-    coul = CoulombPotential(
-        exclusion_radius=exclusion_radius, exclusion_degree=exclusion_degree
-    )
+    coul = CoulombPotential(exclusion_radius=exclusion_radius, exclusion_degree=exclusion_degree)
     coul.to(dtype=dtype)
 
     dist = torch.tensor([0.3])
     fcut = coul.f_cutoff(dist)
     assert_close(
         fcut,
-        1
-        - ((1 - torch.cos(torch.pi * (dist / exclusion_radius))) * 0.5)
-        ** exclusion_degree,
+        1 - ((1 - torch.cos(torch.pi * (dist / exclusion_radius))) * 0.5) ** exclusion_degree,
     )
 
 
@@ -345,9 +341,7 @@ def test_spline_potential_cases():
     y_grid_2 = torch.reciprocal(-(x_grid_2**2) * 0.01)
 
     spline = None
-    with pytest.raises(
-        ValueError, match="Length of radial grid and value array mismatch."
-    ):
+    with pytest.raises(ValueError, match="Length of radial grid and value array mismatch."):
         spline = SplinePotential(r_grid=x_grid, y_grid=y_grid_2)
 
     with pytest.raises(
@@ -432,10 +426,10 @@ def test_spline_potential_vs_coulomb():
         ),
     ],
 )
-def test_potentials_jit(potpars):
+def test_potentials_compile(potpars):
     pot, pars = potpars
 
-    class JITWrapper(torch.nn.Module):
+    class CompileWrapper(torch.nn.Module):
         def __init__(self, **kwargs):
             super().__init__()
             self.pot = pot(**kwargs)
@@ -448,17 +442,17 @@ def test_potentials_jit(potpars):
                 self.pot.background_correction(),
             )
 
-    wrapper = JITWrapper(**pars)
-    jit_wrapper = torch.jit.script(wrapper)
+    wrapper = CompileWrapper(**pars)
+    compiled_wrapper = torch.compile(wrapper, backend="eager")
 
     x = torch.tensor([1.0, 2.0, 3.0])
     rs_y, ks_y, self_y, bg_y = wrapper(x)
-    rs_y_jit, ks_y_jit, self_y_jit, bg_y_jit = jit_wrapper(x)
+    rs_y_compiled, ks_y_compiled, self_y_compiled, bg_y_compiled = compiled_wrapper(x)
 
-    assert_close(rs_y, rs_y_jit)
-    assert_close(ks_y, ks_y_jit)
-    assert_close(self_y, self_y_jit)
-    assert_close(bg_y, bg_y_jit)
+    assert_close(rs_y, rs_y_compiled)
+    assert_close(ks_y, ks_y_compiled)
+    assert_close(self_y, self_y_compiled)
+    assert_close(bg_y, bg_y_compiled)
 
 
 @pytest.mark.parametrize("smearing", smearinges)
@@ -530,29 +524,23 @@ def test_combined_potential(smearing):
         rtol=rtol,
         atol=atol,
     )
-    assert_close(
-        weights[0] * ipl_1_bg + weights[1] * ipl_2_bg, combined_bg, rtol=rtol, atol=atol
-    )
+    assert_close(weights[0] * ipl_1_bg + weights[1] * ipl_2_bg, combined_bg, rtol=rtol, atol=atol)
 
 
 @pytest.mark.parametrize("smearing", smearinges)
-def test_combined_potentials_jit(smearing):
-    # make a separate test as pytest.mark.parametrize does not work with
-    # torch.jit.script for combined potentials
+def test_combined_potentials_compile(smearing):
     coulomb = CoulombPotential(smearing=smearing)
     coulomb.to(dtype=dtype)
     x_grid = torch.logspace(-2, 2, 100, dtype=dtype)
     y_grid = coulomb.lr_from_dist(x_grid)
 
     # create a spline potential
-    spline = SplinePotential(
-        r_grid=x_grid, y_grid=y_grid, reciprocal=True, smearing=1.0
-    )
+    spline = SplinePotential(r_grid=x_grid, y_grid=y_grid, reciprocal=True, smearing=1.0)
     spline.to(dtype=dtype)
     combo = CombinedPotential(potentials=[spline, coulomb], smearing=1.0)
     combo.to(dtype=dtype)
     mypme = PMECalculator(combo, mesh_spacing=1.0)
-    _ = torch.jit.script(mypme)
+    _ = torch.compile(mypme, backend="eager")
 
 
 def test_combined_potential_incompatability():
@@ -560,12 +548,18 @@ def test_combined_potential_incompatability():
     coulomb2 = CoulombPotential()
     with pytest.raises(
         ValueError,
-        match="Cannot combine direct \\(`smearing=None`\\) and range-separated \\(`smearing=float`\\) potentials.",
+        match=(
+            "Cannot combine direct \\(`smearing=None`\\) and range-separated "
+            "\\(`smearing=float`\\) potentials."
+        ),
     ):
         _ = CombinedPotential(potentials=[coulomb1, coulomb2])
     with pytest.raises(
         ValueError,
-        match="You should specify a `smearing` when combining range-separated \\(`smearing=float`\\) potentials.",
+        match=(
+            "You should specify a `smearing` when combining range-separated "
+            "\\(`smearing=float`\\) potentials."
+        ),
     ):
         _ = CombinedPotential(potentials=[coulomb1, coulomb1])
     with pytest.raises(
@@ -717,9 +711,7 @@ def test_small_k_scaling(exponent, smearing):
     ipl = InversePowerLawPotential(exponent=exponent, smearing=smearing)
     ipl.to(dtype=dtype)
 
-    k_sq_small = torch.logspace(
-        -8, -4, 200, dtype=dtype, requires_grad=True
-    )  # small k^2 values
+    k_sq_small = torch.logspace(-8, -4, 200, dtype=dtype, requires_grad=True)  # small k^2 values
 
     # -- Deviation scaling --
     V = ipl.lr_from_k_sq(k_sq_small)
@@ -734,9 +726,7 @@ def test_small_k_scaling(exponent, smearing):
         torch.tensor(expected, dtype=dtype),
         atol=0.1,
         rtol=0.1,
-    ), (
-        f"Scaling in small-k limit incorrect for p={exponent}, expected {expected}, got {scaling}"
-    )
+    ), f"Scaling in small-k limit incorrect for p={exponent}, expected {expected}, got {scaling}"
 
     # -- Gradient scaling --
     V.sum().backward()
@@ -751,5 +741,6 @@ def test_small_k_scaling(exponent, smearing):
         atol=0.1,
         rtol=0.1,
     ), (
-        f"Gradient scaling in small-k limit incorrect for p={exponent}, expected {expected_grad}, got {grad_scaling}"
+        f"Gradient scaling in small-k limit incorrect for p={exponent}, "
+        f"expected {expected_grad}, got {grad_scaling}"
     )

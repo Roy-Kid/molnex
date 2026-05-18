@@ -25,8 +25,13 @@ class ForceDerivation(nn.Module):
     def __init__(self):
         super().__init__()
 
+    @torch.compiler.disable
     def forward(self, energy: torch.Tensor, pos: torch.Tensor) -> torch.Tensor:
         """Compute forces as negative gradient of energy w.r.t. positions.
+
+        ``torch.compiler.disable`` is required because ``torch.autograd.grad``
+        triggers a double-backward through the compiled graph, which
+        ``aot_autograd`` does not support.
 
         Args:
             energy: Molecular energy (scalar or ``(B,)``).

@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from molix.config import set_precision
 from molix.core.state import TrainState
-from molix.core.steps import DefaultEvalStep, DefaultTrainStep, extract_model_inputs
+from molix.core.steps import DefaultEvalStep, DefaultTrainStep
 from molix.core.trainer import Trainer
 
 
@@ -18,14 +18,14 @@ def _reset_precision():
     set_precision("fp32")
 
 
-# Simple test model following canonical MolNex contract: forward(**model_inputs)
+# Simple test model following canonical MolNex contract: forward(batch)
 class SimpleModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.linear = nn.Linear(10, 1)
 
-    def forward(self, x, **_kwargs):
-        return self.linear(x)
+    def forward(self, batch):
+        return self.linear(batch["x"])
 
 
 def simple_loss_fn(predictions, batch):
@@ -122,8 +122,7 @@ def test_trainer_accepts_custom_step():
 
         def on_train_batch(self, trainer, state, batch):
             self.train_called = True
-            model_inputs = extract_model_inputs(batch)
-            predictions = trainer.model(**model_inputs)
+            predictions = trainer.model(batch)
             loss = trainer.loss_fn(predictions, batch)
             trainer.optimizer.zero_grad()
             loss.backward()
@@ -133,8 +132,7 @@ def test_trainer_accepts_custom_step():
         def on_eval_batch(self, trainer, state, batch):
             self.eval_called = True
             with torch.no_grad():
-                model_inputs = extract_model_inputs(batch)
-                predictions = trainer.model(**model_inputs)
+                predictions = trainer.model(batch)
                 loss = trainer.loss_fn(predictions, batch)
             return {"loss": loss, "predictions": predictions}
 
@@ -221,8 +219,7 @@ def test_trainer_delegates_to_train_step():
 
         def on_train_batch(self, trainer, state, batch):
             self.train_calls += 1
-            model_inputs = extract_model_inputs(batch)
-            predictions = trainer.model(**model_inputs)
+            predictions = trainer.model(batch)
             loss = trainer.loss_fn(predictions, batch)
             trainer.optimizer.zero_grad()
             loss.backward()
@@ -232,8 +229,7 @@ def test_trainer_delegates_to_train_step():
         def on_eval_batch(self, trainer, state, batch):
             self.eval_calls += 1
             with torch.no_grad():
-                model_inputs = extract_model_inputs(batch)
-                predictions = trainer.model(**model_inputs)
+                predictions = trainer.model(batch)
                 loss = trainer.loss_fn(predictions, batch)
             return {"loss": loss, "predictions": predictions}
 
@@ -267,8 +263,7 @@ def test_custom_step_gradient_accumulation():
             self.accumulated = 0
 
         def on_train_batch(self, trainer, state, batch):
-            model_inputs = extract_model_inputs(batch)
-            predictions = trainer.model(**model_inputs)
+            predictions = trainer.model(batch)
             loss = trainer.loss_fn(predictions, batch) / self.accumulation_steps
 
             loss.backward()
@@ -283,8 +278,7 @@ def test_custom_step_gradient_accumulation():
 
         def on_eval_batch(self, trainer, state, batch):
             with torch.no_grad():
-                model_inputs = extract_model_inputs(batch)
-                predictions = trainer.model(**model_inputs)
+                predictions = trainer.model(batch)
                 loss = trainer.loss_fn(predictions, batch)
             return {"loss": loss, "predictions": predictions}
 

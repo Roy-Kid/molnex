@@ -7,8 +7,8 @@ import pytest
 import torch
 from ase.io import read
 
-import molpot.elec
-from molpot.elec import (
+import molpot.potentials.elec
+from molpot.potentials.elec import (
     CoulombPotential,
     EwaldCalculator,
     InversePowerLawPotential,
@@ -88,9 +88,7 @@ def test_madelung(crystal_name, scaling_factor, calc_name, full_neighbor_list):
     to triclinic, as well as cation-anion ratios of 1:1, 1:2 and 2:1.
     """
     # Get input parameters and adjust to account for scaling
-    pos, charges, cell, madelung_ref, num_units = define_crystal(
-        crystal_name, dtype=DTYPE
-    )
+    pos, charges, cell, madelung_ref, num_units = define_crystal(crystal_name, dtype=DTYPE)
     pos *= scaling_factor
     cell *= scaling_factor
     madelung_ref /= scaling_factor
@@ -178,9 +176,7 @@ def test_wigner(crystal_name, scaling_factor):
     to numerically slower convergence of the relevant sums.
     """
     # Get parameters defining atomic positions, cell and charges
-    positions, charges, cell, madelung_ref, _ = define_crystal(
-        crystal_name, dtype=DTYPE
-    )
+    positions, charges, cell, madelung_ref, _ = define_crystal(crystal_name, dtype=DTYPE)
     positions *= scaling_factor
     cell *= scaling_factor
     madelung_ref /= scaling_factor
@@ -255,20 +251,20 @@ def test_random_structure(
 
     if calc_name == "ewald":
         calc = EwaldCalculator(
-            CoulombPotential(smearing=smearing, prefactor=molpot.elec.prefactors.eV_A),
+            CoulombPotential(smearing=smearing, prefactor=molpot.potentials.elec.prefactors.eV_A),
             lr_wavelength=0.5 * smearing,
             full_neighbor_list=full_neighbor_list,
         )
 
     elif calc_name == "pme":
         calc = PMECalculator(
-            CoulombPotential(smearing=smearing, prefactor=molpot.elec.prefactors.eV_A),
+            CoulombPotential(smearing=smearing, prefactor=molpot.potentials.elec.prefactors.eV_A),
             mesh_spacing=smearing / 8.0,
             full_neighbor_list=full_neighbor_list,
         )
     elif calc_name == "p3m":
         calc = P3MCalculator(
-            CoulombPotential(smearing=smearing, prefactor=molpot.elec.prefactors.eV_A),
+            CoulombPotential(smearing=smearing, prefactor=molpot.potentials.elec.prefactors.eV_A),
             mesh_spacing=smearing / 8.0,
             full_neighbor_list=full_neighbor_list,
         )
@@ -282,7 +278,7 @@ def test_random_structure(
         neighbor_shifts=True,
     )
 
-    # Use manual distance calculation to avoiding issues with the torchscript version of
+    # Use manual distance calculation to avoid neighbor-list implementation details in
     # vesin on Windows. See https://github.com/Luthaf/vesin/issues/21 for more details.
     positions.requires_grad = True
 
@@ -304,9 +300,7 @@ def test_random_structure(
 
     # Compute energy
     energy = torch.sum(potentials * charges)
-    energy_target = (
-        torch.tensor(frame.get_potential_energy(), dtype=DTYPE) / scaling_factor
-    )
+    energy_target = torch.tensor(frame.get_potential_energy(), dtype=DTYPE) / scaling_factor
     torch.testing.assert_close(energy, energy_target, atol=0.0, rtol=1e-4)
 
     # Compute forces
@@ -342,9 +336,7 @@ def test_random_structure(
 
     stress = torch.autograd.grad(energy, strain)[0]
     stress_target = (
-        torch.tensor(
-            frame.get_stress(voigt=False, include_ideal_gas=False), dtype=DTYPE
-        )
+        torch.tensor(frame.get_stress(voigt=False, include_ideal_gas=False), dtype=DTYPE)
         / scaling_factor
     )
     stress_target *= 2.0  # convert from GROMACS "virial"

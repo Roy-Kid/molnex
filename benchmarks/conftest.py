@@ -2,8 +2,7 @@
 
 import pytest
 import torch
-
-from molix.data.types import AtomData, EdgeData, GraphBatch
+from tensordict import TensorDict
 
 # ---------- size parametrization ----------
 
@@ -54,17 +53,17 @@ def graph_data(graph_size):
 
 @pytest.fixture
 def graph_batch_td(graph_data):
-    """Build a GraphBatch TensorDict from graph_data."""
-    atoms = AtomData(
+    """Build a TensorDict TensorDict from graph_data."""
+    atoms = TensorDict(
         Z=graph_data["Z"],
         pos=graph_data["pos"],
         batch=graph_data["batch"],
         batch_size=[graph_data["n_nodes"]],
     )
-    edges = EdgeData(
+    edges = TensorDict(
         edge_index=graph_data["edge_index"],
         bond_diff=graph_data["bond_diff"],
         bond_dist=graph_data["bond_dist"],
         batch_size=[graph_data["n_edges"]],
     )
-    return GraphBatch(atoms=atoms, edges=edges, batch_size=[])
+    return TensorDict(atoms=atoms, edges=edges, batch_size=[])

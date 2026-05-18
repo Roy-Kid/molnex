@@ -15,7 +15,7 @@ Three physical symmetries every encoder + property head must satisfy:
 
 This module provides three things:
 
-    1. :func:`make_graph_batch` — build a ``GraphBatch`` from raw
+    1. :func:`make_graph_batch` — build a ``TensorDict`` from raw
        tensors, computing ``bond_diff`` / ``bond_dist`` from positions.
     2. :func:`translate_graph` / :func:`rotate_graph` /
        :func:`permute_graph` — the three input transforms.
@@ -30,8 +30,7 @@ the module they exercise (encoders in ``test_molzoo``, heads in
 from __future__ import annotations
 
 import torch
-
-from molix.data.types import AtomData, EdgeData, GraphBatch, GraphData
+from tensordict import TensorDict
 
 
 def make_graph_batch(
@@ -41,8 +40,8 @@ def make_graph_batch(
     batch: torch.Tensor,
     *,
     graphs: dict[str, torch.Tensor] | None = None,
-) -> GraphBatch:
-    """Build a ``GraphBatch`` from raw tensors.
+) -> TensorDict:
+    """Build a ``TensorDict`` from raw tensors.
 
     Args:
         pos: ``(N, 3)`` atomic positions.
@@ -54,7 +53,7 @@ def make_graph_batch(
             auto-derived from ``batch`` and always present.
 
     Returns:
-        A fully-formed ``GraphBatch`` with ``bond_diff = pos[dst] - pos[src]``
+        A fully-formed ``TensorDict`` with ``bond_diff = pos[dst] - pos[src]``
         and ``bond_dist = ‖bond_diff‖`` recomputed from ``pos``.
     """
     bond_diff = pos[edge_index[:, 1]] - pos[edge_index[:, 0]]
@@ -65,14 +64,14 @@ def make_graph_batch(
 
     num_atoms_per_graph = torch.zeros(n_graphs, dtype=torch.long)
     num_atoms_per_graph.scatter_add_(0, batch, torch.ones_like(batch))
-    graph_data = GraphData(num_atoms=num_atoms_per_graph, batch_size=[n_graphs])
+    graph_data = TensorDict(num_atoms=num_atoms_per_graph, batch_size=[n_graphs])
     if graphs is not None:
         for k, v in graphs.items():
             graph_data[k] = v
 
-    return GraphBatch(
-        atoms=AtomData(Z=Z, pos=pos, batch=batch, batch_size=[n_atoms]),
-        edges=EdgeData(
+    return TensorDict(
+        atoms=TensorDict(Z=Z, pos=pos, batch=batch, batch_size=[n_atoms]),
+        edges=TensorDict(
             edge_index=edge_index,
             bond_diff=bond_diff,
             bond_dist=bond_dist,
@@ -83,7 +82,7 @@ def make_graph_batch(
     )
 
 
-def translate_graph(batch: GraphBatch, t: torch.Tensor) -> GraphBatch:
+def translate_graph(batch: TensorDict, t: torch.Tensor) -> TensorDict:
     """Shift all atomic positions by ``t``. Edge geometry recomputes from pos."""
     pos = batch["atoms", "pos"] + t
     extras = _extract_graph_extras(batch)
@@ -96,7 +95,7 @@ def translate_graph(batch: GraphBatch, t: torch.Tensor) -> GraphBatch:
     )
 
 
-def rotate_graph(batch: GraphBatch, R: torch.Tensor) -> GraphBatch:
+def rotate_graph(batch: TensorDict, R: torch.Tensor) -> TensorDict:
     """Rotate all atomic positions by ``R`` (3×3 rotation matrix)."""
     pos = batch["atoms", "pos"] @ R.T
     extras = _extract_graph_extras(batch)
@@ -109,7 +108,7 @@ def rotate_graph(batch: GraphBatch, R: torch.Tensor) -> GraphBatch:
     )
 
 
-def permute_graph(batch: GraphBatch, perm: torch.Tensor) -> GraphBatch:
+def permute_graph(batch: TensorDict, perm: torch.Tensor) -> TensorDict:
     """Relabel atoms by ``perm``; edge_index is remapped, per-graph fields kept."""
     inv_perm = torch.empty_like(perm)
     inv_perm[perm] = torch.arange(len(perm))
@@ -127,7 +126,7 @@ def permute_graph(batch: GraphBatch, perm: torch.Tensor) -> GraphBatch:
     )
 
 
-def recompute_edge_geometry(batch: GraphBatch) -> GraphBatch:
+def recompute_edge_geometry(batch: TensorDict) -> TensorDict:
     """Re-derive ``bond_diff`` / ``bond_dist`` from ``pos`` in-place.
 
     Call this at the start of a pipeline forward when ``pos`` carries
@@ -150,7 +149,7 @@ def recompute_edge_geometry(batch: GraphBatch) -> GraphBatch:
 _RESERVED_GRAPH_KEYS = {"num_atoms"}
 
 
-def _extract_graph_extras(batch: GraphBatch) -> dict[str, torch.Tensor] | None:
+def _extract_graph_extras(batch: TensorDict) -> dict[str, torch.Tensor] | None:
     """Lift user-set per-graph fields off ``batch`` so make_graph_batch can
     re-attach them after a transform. ``num_atoms`` is auto-derived and
     therefore skipped."""

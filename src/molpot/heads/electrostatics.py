@@ -10,7 +10,7 @@ non-self-consistent linear-response branch:
   ``α_iso · I + α_deviator`` where ``α_deviator`` is a symmetric
   traceless 3×3 tensor reconstructed from the encoder's ``2e`` block.
 
-Both heads are intentionally tensor-in / tensor-out (not GraphBatch-in)
+Both heads are intentionally tensor-in / tensor-out (not TensorDict-in)
 so they can be unit-tested with synthetic features and slotted into a
 composer pipeline at the call site rather than by reading internal
 batch keys. This mirrors the molrep / molzoo encoder convention.

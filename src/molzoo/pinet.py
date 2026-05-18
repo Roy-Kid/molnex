@@ -22,15 +22,16 @@ Reference:
 
 from __future__ import annotations
 
-from typing import Literal, Mapping
+from contextlib import nullcontext
+from typing import Literal
 
 import torch
 import torch.nn as nn
 from pydantic import BaseModel, ConfigDict, Field
+from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase
 
 from molix import config
-from molix.data.types import GraphBatch
 from molpot.derivation import EnergyAggregation, ForceDerivation
 from molpot.heads import ChargeResponseHead, DipoleHead
 from molrep.embedding.cutoff import CosineCutoff, HalfCosineCutoff, TanhCutoff
@@ -86,12 +87,17 @@ def _compute_d5(d3: torch.Tensor) -> torch.Tensor:
 class PiNet(TensorDictModuleBase):
     """PiNet feature encoder.
 
-    Inputs from the nested ``GraphBatch`` schema:
+    Inputs from the nested ``TensorDict`` schema:
 
     * ``("atoms", "Z")``: atomic numbers ``(N,)``.
+    * ``("atoms", "pos")``: positions ``(N, 3)``.
     * ``("edges", "edge_index")``: source-target pairs ``(E, 2)``.
-    * ``("edges", "bond_diff")``: displacements ``pos[target] - pos[source]``.
-    * ``("edges", "bond_dist")``: distances ``(E,)``.
+
+    Edge geometry (``bond_diff`` = ``pos[target] - pos[source]`` and
+    ``bond_dist`` = ``‖bond_diff‖``) is derived from ``pos`` + ``edge_index``
+    inside ``forward``. Caching them in the pipeline buys nothing (one
+    gather + diff + norm per step) and breaks autograd-through-pos for
+    force training.
 
     Writes in place:
 
@@ -104,9 +110,8 @@ class PiNet(TensorDictModuleBase):
 
     in_keys = [
         ("atoms", "Z"),
+        ("atoms", "pos"),
         ("edges", "edge_index"),
-        ("edges", "bond_diff"),
-        ("edges", "bond_dist"),
     ]
     out_keys = [("atoms", "node_features")]
 
@@ -165,6 +170,15 @@ class PiNet(TensorDictModuleBase):
         )
         self._atom_types: torch.Tensor
 
+        # Z -> embedding-row lookup table. Sized to cover every stable element
+        # so a single gather replaces the per-forward Python loop. Unknown Z
+        # falls back to row 0, matching the prior masked_fill_ default.
+        z_to_idx = torch.zeros(128, dtype=torch.long)
+        for i, z in enumerate(cfg.atom_types):
+            z_to_idx[int(z)] = i
+        self.register_buffer("_z_to_idx", z_to_idx, persistent=False)
+        self._z_to_idx: torch.Tensor
+
         _cutoff_cls = {"f1": CosineCutoff, "f2": TanhCutoff, "hip": HalfCosineCutoff}
         self.cutoff = _cutoff_cls[cfg.cutoff_type](r_cut=cfg.r_max)
 
@@ -212,19 +226,22 @@ class PiNet(TensorDictModuleBase):
     def from_spec(cls, spec: PiNetSpec) -> "PiNet":
         return cls(**spec.model_dump())
 
-    def forward(self, td: GraphBatch) -> GraphBatch:
+    def forward(self, td: TensorDict) -> TensorDict:
         Z = td["atoms", "Z"]
+        pos = td["atoms", "pos"]
         edge_index = td["edges", "edge_index"]
-        bond_diff = td["edges", "bond_diff"]
-        bond_dist = td["edges", "bond_dist"]
 
-        idx = torch.zeros_like(Z)
-        for i, z in enumerate(self.config.atom_types):
-            idx = torch.where(Z == z, torch.full_like(idx, i), idx)
+        # Edge geometry derived from pos + edge_index per forward.
+        # One gather + diff + norm — cheaper than caching, and gradients flow
+        # back to pos naturally so force training needs no special path.
+        bond_diff = pos[edge_index[:, 1]] - pos[edge_index[:, 0]]
+        bond_dist = bond_diff.norm(dim=-1).clamp(min=1e-8)
+
+        idx = self._z_to_idx[Z]
         p1 = self.element_embedding(idx)
         tensors: dict[str, torch.Tensor] = {"edge_index": edge_index, "p1": p1}
 
-        d3 = bond_diff / bond_dist.clamp(min=1e-8).unsqueeze(-1)
+        d3 = bond_diff / bond_dist.unsqueeze(-1)
         tensors["d3"] = d3
         if self.rank >= 3:
             tensors["p3"] = torch.zeros(
@@ -286,15 +303,6 @@ class PiNet(TensorDictModuleBase):
 # ---------------------------------------------------------------------------
 
 
-def _recompute_edges(batch: GraphBatch) -> None:
-    """Recompute edge geometry from positions so autograd traces forces."""
-    pos = batch["atoms", "pos"]
-    ei = batch["edges", "edge_index"]
-    diff = pos[ei[:, 1]] - pos[ei[:, 0]]
-    batch["edges", "bond_diff"] = diff
-    batch["edges", "bond_dist"] = diff.norm(dim=-1).clamp(min=1e-8)
-
-
 def _pool_layer(features: torch.Tensor, reduction: str) -> torch.Tensor:
     if reduction == "mean":
         return features.mean(dim=1)
@@ -305,20 +313,6 @@ def _pool_layer(features: torch.Tensor, reduction: str) -> torch.Tensor:
     raise ValueError(f"Unknown reduction {reduction!r}.")
 
 
-def _atomic_dress(
-    Z: torch.Tensor,
-    batch: torch.Tensor,
-    dress: Mapping[int, float],
-    num_graphs: int,
-) -> torch.Tensor:
-    values = torch.zeros_like(Z, dtype=torch.float32)
-    for z_val, e_val in dress.items():
-        values = torch.where(Z == int(z_val), torch.full_like(values, float(e_val)), values)
-    out = torch.zeros(num_graphs, dtype=values.dtype, device=values.device)
-    out.scatter_add_(0, batch, values)
-    return out
-
-
 class PiNetPotential(nn.Module):
     """PiNet energy + force prediction model.
 
@@ -327,15 +321,16 @@ class PiNetPotential(nn.Module):
     graph energies, and derives forces via ``torch.autograd.grad`` when
     ``compute_forces`` (or ``compute_forces_default``) is set.
 
+    Per-element baseline subtraction (atomic dress) is handled at cache
+    time by :class:`molix.data.AtomicDress` — labels are already dressed
+    when they reach this model, so no runtime dress add is needed.
+
     Args:
         encoder: :class:`PiNet` (or any module that writes ``("atoms",
-            "node_features")`` into a ``GraphBatch``).
+            "node_features")`` into a ``TensorDict``).
         hidden_dim: Hidden dimension of the per-atom energy MLP.
         layer_reduction: How to pool across GC-block layers
             (``"mean"`` / ``"sum"`` / ``"last"``).
-        e_dress: Optional per-element energy corrections ``{Z: eV}``.
-        e_scale: Divisor applied to total energy (e.g. unit conversion).
-        e_unit: Multiplier applied to total energy.
         compute_forces: Default value for forward's ``compute_forces``
             kwarg. Set to ``True`` for force training so the Trainer's plain
             ``model(batch)`` call returns ``{"energy", "forces"}``.
@@ -347,17 +342,11 @@ class PiNetPotential(nn.Module):
         encoder: nn.Module,
         hidden_dim: int = 64,
         layer_reduction: Literal["mean", "sum", "last"] = "mean",
-        e_dress: dict[int, float] | None = None,
-        e_scale: float = 1.0,
-        e_unit: float = 1.0,
         compute_forces: bool = False,
     ) -> None:
         super().__init__()
         self.encoder = encoder
         self.layer_reduction = layer_reduction
-        self.e_dress = e_dress or {}
-        self.e_scale = e_scale
-        self.e_unit = e_unit
         self.compute_forces_default = compute_forces
 
         input_dim: int = getattr(encoder, "output_dim", 16)
@@ -370,51 +359,54 @@ class PiNetPotential(nn.Module):
         self.force_derivation = ForceDerivation()
 
     def forward(
-        self, batch: GraphBatch, *, compute_forces: bool | None = None
+        self, batch: TensorDict, *, compute_forces: bool | None = None
     ) -> dict[str, torch.Tensor]:
         if compute_forces is None:
             compute_forces = self.compute_forces_default
-        if compute_forces:
-            # Force training needs an active autograd graph through pos, so
-            # locally re-enable grad even if the caller wrapped us in
-            # `torch.no_grad()` (the DefaultEvalStep does).
-            grad_ctx = torch.enable_grad()
-        else:
-            from contextlib import nullcontext
-
-            grad_ctx = nullcontext()
+        grad_ctx = torch.enable_grad() if compute_forces else nullcontext()
         with grad_ctx:
             if compute_forces and not batch["atoms", "pos"].requires_grad:
                 batch["atoms", "pos"] = batch["atoms", "pos"].clone().requires_grad_(True)
-            _recompute_edges(batch)
-            batch = self.encoder(batch)
-
-            node_feats = _pool_layer(batch["atoms", "node_features"], self.layer_reduction)
-            atom_energy = self.node_mlp(node_feats).squeeze(-1)
-
-            atom_batch = batch["atoms", "batch"]
-            # Read num_graphs from the static GraphData batch size — not
-            # `atom_batch.max().item()`, which forces a host sync and breaks
-            # the torch.compile graph.
-            num_graphs = batch["graphs"].batch_size[0]
-            energy = self.energy_aggregation(atom_energy, atom_batch, num_graphs=num_graphs)
-
-            if self.e_dress:
-                energy = energy + _atomic_dress(
-                    batch["atoms", "Z"],
-                    atom_batch,
-                    self.e_dress,
-                    num_graphs,
-                ).to(dtype=energy.dtype)
-            energy = (energy / self.e_scale) * self.e_unit
-
-            out: dict[str, torch.Tensor] = {
-                "atomic_energy": atom_energy,
-                "energy": energy,
-            }
+            out = self._energy_forward(batch)
             if compute_forces:
-                out["forces"] = self.force_derivation(energy, batch["atoms", "pos"])
+                out["forces"] = self.force_derivation(out["energy"], batch["atoms", "pos"])
         return out
+
+    def _energy_forward(self, batch: TensorDict) -> dict[str, torch.Tensor]:
+        """Compilable energy computation: encoder -> pool -> head -> aggregate.
+
+        Extracted so ``torch.compile`` can wrap it without hitting the
+        double-backward limitation that ``ForceDerivation``'s internal
+        ``torch.autograd.grad`` triggers.
+        """
+        batch = self.encoder(batch)
+
+        node_feats = _pool_layer(batch["atoms", "node_features"], self.layer_reduction)
+        atom_energy = self.node_mlp(node_feats).squeeze(-1)
+
+        atom_batch = batch["atoms", "batch"]
+        num_graphs = batch["graphs"].batch_size[0]
+        energy = self.energy_aggregation(atom_energy, atom_batch, num_graphs=num_graphs)
+
+        return {
+            "atomic_energy": atom_energy,
+            "energy": energy,
+        }
+
+    def compile_encoder(self, *, backend: str = "inductor", **kwargs) -> None:
+        """Compile only the encoder, leaving the head and force derivation eager.
+
+        ``torch.compile`` on the full :class:`PiNetPotential` is not supported
+        for force training because :class:`ForceDerivation` calls
+        ``torch.autograd.grad`` internally, which triggers a double-backward
+        through the compiled graph that ``aot_autograd`` cannot handle.
+
+        For energy-only training, ``torch.compile(potential)`` works fine.
+        For energy+force training, call ``potential.compile_encoder()``
+        before the Trainer — this compiles the encoder (95%+ of compute)
+        while leaving the ``autograd.grad`` path eager.
+        """
+        self.encoder = torch.compile(self.encoder, backend=backend, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -459,8 +451,7 @@ class PiNetDipole(nn.Module):
             regularization=regularization,
         )
 
-    def forward(self, batch: GraphBatch) -> dict[str, torch.Tensor]:
-        _recompute_edges(batch)
+    def forward(self, batch: TensorDict) -> dict[str, torch.Tensor]:
         batch = self.encoder(batch)
 
         atom_batch = batch["atoms", "batch"]
@@ -484,7 +475,8 @@ class PiNetDipole(nn.Module):
                 self.layer_reduction,
             )
             edge_index = batch["edges", "edge_index"]
-            bond_diff = batch["edges", "bond_diff"]
+            pos = batch["atoms", "pos"]
+            bond_diff = pos[edge_index[:, 1]] - pos[edge_index[:, 0]]
         edge_vectors = None
         if self.head.uses_bc and "i3_features" in batch["edges"].keys():
             edge_vectors = _pool_layer(
@@ -556,8 +548,7 @@ class PiNetPolarizability(nn.Module):
             sigma=sigma,
         )
 
-    def forward(self, batch: GraphBatch) -> dict[str, torch.Tensor]:
-        _recompute_edges(batch)
+    def forward(self, batch: TensorDict) -> dict[str, torch.Tensor]:
         batch = self.encoder(batch)
 
         atom_batch = batch["atoms", "batch"]
@@ -576,13 +567,16 @@ class PiNetPolarizability(nn.Module):
                 batch["edges", "i3_features"],
                 self.layer_reduction,
             )
+        pos = batch["atoms", "pos"]
+        edge_index = batch["edges", "edge_index"]
+        bond_diff = pos[edge_index[:, 1]] - pos[edge_index[:, 0]]
         return self.head(
-            pos=batch["atoms", "pos"],
+            pos=pos,
             Z=batch["atoms", "Z"],
             atom_batch=atom_batch,
             num_graphs=num_graphs,
-            edge_index=batch["edges", "edge_index"],
-            bond_diff=batch["edges", "bond_diff"],
+            edge_index=edge_index,
+            bond_diff=bond_diff,
             node_scalars=node_scalars,
             edge_scalars=edge_scalars,
             edge_vectors=edge_vectors,

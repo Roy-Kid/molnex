@@ -47,10 +47,10 @@ from typing import Any
 import torch
 import torch.nn as nn
 from pydantic import BaseModel, ConfigDict
+from tensordict import TensorDict
 
-from molix.data.types import GraphBatch
 from molpot.heads.multipole import PermMultipoleHead, PermMultipoleHeadSpec
-from molpot.potentials.electrostatics.ewald import (
+from molpot.potentials.elec.ewald_multipole import (
     EwaldMultipoleEnergy,
     EwaldMultipoleEnergySpec,
 )
@@ -324,7 +324,7 @@ class Sonata(nn.Module):
 
     def forward(
         self,
-        batch: GraphBatch,
+        batch: TensorDict,
         *,
         compute_forces: bool = False,
         compute_stress: bool = False,
@@ -333,7 +333,7 @@ class Sonata(nn.Module):
         """Run encoder → multipole head → Ewald → optional short-range.
 
         Args:
-            batch: Post-collate :class:`GraphBatch` carrying ``atoms``,
+            batch: Post-collate :class:`TensorDict` carrying ``atoms``,
                 ``edges``, and ``graphs`` sub-dicts. Periodic systems
                 must include ``("graphs", "cell")``.
             compute_forces: Derive forces ``F = -∂U/∂pos`` via autograd.

@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 import torch
 
-from molix.data.cache import PackedCache
 from molix.data.pipeline import DAGCache, Node, Pipeline
 from molix.data.source import InMemorySource
 from molix.data.task import BatchTask, DatasetTask, SampleTask
@@ -126,10 +125,12 @@ class TestBuilder:
             p.add(CountingSample())
 
     def test_add_with_reads_writes(self):
-        node = Pipeline("p").add(
-            CountingSample(), name="c",
-            reads={"Z", "pos"}, writes={"edge_index"}
-        ).build().nodes[0]
+        node = (
+            Pipeline("p")
+            .add(CountingSample(), name="c", reads={"Z", "pos"}, writes={"edge_index"})
+            .build()
+            .nodes[0]
+        )
         assert node.reads == frozenset({"Z", "pos"})
         assert node.writes == frozenset({"edge_index"})
 
@@ -326,7 +327,12 @@ class TestRun:
     def test_fit_states_skips_fit(self):
         shift = MeanShift()
         spec = Pipeline("p").add(shift).build()
-        list(spec.run(InMemorySource(_samples(4)), fit_states={"mean_shift:y": {"mean": torch.tensor(5.0)}}))
+        list(
+            spec.run(
+                InMemorySource(_samples(4)),
+                fit_states={"mean_shift:y": {"mean": torch.tensor(5.0)}},
+            )
+        )
         assert shift.fit_calls == 0
         assert shift.mean == 5.0
 
@@ -508,7 +514,7 @@ class TestCache:
 
     def test_overwrite(self, tmp_path):
         spec = Pipeline("p").add(_Tag()).build()
-        dag1 = spec.cache(InMemorySource(_samples(2)), base_dir=tmp_path)
+        spec.cache(InMemorySource(_samples(2)), base_dir=tmp_path)
         dag2 = spec.cache(InMemorySource(_samples(5)), base_dir=tmp_path, overwrite=True)
         assert len(dag2.final.load()["samples"]) == 5
 
@@ -540,7 +546,7 @@ class TestCache:
         dag = spec.cache(src, base_dir=tmp_path)
         expected_key = spec.cache_key(src)
         # Last prepare node's sink uses the final cache key
-        final_node = spec.prepare_nodes[-1]
+        spec.prepare_nodes[-1]
         assert dag.final.sink.name == f"qm9-{expected_key}.pt"
 
 

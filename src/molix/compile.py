@@ -5,6 +5,8 @@ Provides a toggleable compile wrapper and graph-break counting utility.
 
 from __future__ import annotations
 
+from typing import cast
+
 import torch
 import torch.nn as nn
 
@@ -42,12 +44,15 @@ def maybe_compile(
         f"Compiling module {module.__class__.__name__} with "
         f"backend={backend}, fullgraph={fullgraph}, mode={mode}"
     )
-    return torch.compile(
-        module,
-        backend=backend,
-        fullgraph=fullgraph,
-        dynamic=dynamic,
-        mode=mode,
+    return cast(
+        nn.Module,
+        torch.compile(
+            module,
+            backend=backend,
+            fullgraph=fullgraph,
+            dynamic=dynamic,
+            mode=mode,
+        ),
     )
 
 

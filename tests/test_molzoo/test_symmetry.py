@@ -13,6 +13,14 @@ from __future__ import annotations
 
 import pytest
 import torch
+from tensordict import TensorDict
+
+from molpot.derivation import EnergyAggregation, ForceDerivation
+from molpot.heads import AtomicEnergyMLP
+from molpot.pooling import EdgeToNodePooling, LayerPooling
+from molrep.embedding.node import DiscreteEmbeddingSpec
+from molrep.utils.equivariance import random_rotation_matrix, rotate_vectors
+from molzoo import MACE, Allegro
 from tests.symmetry_helpers import (
     make_graph_batch,
     permute_graph,
@@ -20,14 +28,6 @@ from tests.symmetry_helpers import (
     rotate_graph,
     translate_graph,
 )
-
-from molix.data.types import GraphBatch
-from molpot.derivation import EnergyAggregation, ForceDerivation
-from molpot.heads import AtomicEnergyMLP
-from molpot.pooling import EdgeToNodePooling, LayerPooling
-from molrep.embedding.node import DiscreteEmbeddingSpec
-from molrep.utils.equivariance import random_rotation_matrix, rotate_vectors
-from molzoo import MACE, Allegro
 
 # ---------------------------------------------------------------------------
 # Pipeline builder (encoder → energy → forces)
@@ -46,7 +46,7 @@ def make_pipeline(encoder, is_edge_encoder: bool = False):
     energy_agg = EnergyAggregation(pooling="sum")
     force_deriv = ForceDerivation()
 
-    def forward(batch: GraphBatch):
+    def forward(batch: TensorDict):
         pos = batch["atoms", "pos"]
         edge_index = batch["edges", "edge_index"]
 

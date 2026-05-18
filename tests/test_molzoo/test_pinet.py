@@ -4,18 +4,18 @@ from __future__ import annotations
 
 import pytest
 import torch
-from tests.symmetry_helpers import (
-    make_graph_batch,
-    permute_graph,
-    rotate_graph,
-    translate_graph,
-)
 
 from molrep.embedding.cutoff import CosineCutoff, HalfCosineCutoff, TanhCutoff
 from molrep.embedding.radial import GaussianBasis, PolynomialBasis
 from molrep.interaction.pinet import DotLayer, PIXLayer
 from molrep.utils.equivariance import random_rotation_matrix, rotate_vectors
 from molzoo import PiNet
+from tests.symmetry_helpers import (
+    make_graph_batch,
+    permute_graph,
+    rotate_graph,
+    translate_graph,
+)
 
 
 def _graph():
@@ -89,8 +89,9 @@ class TestPiNetLayers:
     def test_pix_unweighted_gathers_target_property(self):
         px = torch.arange(4 * 3 * 2, dtype=torch.float32).reshape(4, 3, 2)
         edge_index = torch.tensor([[0, 1], [2, 3]])
-        out = PIXLayer(channels=2, weighted=False)(edge_index, px)
-        torch.testing.assert_close(out, px[edge_index[:, 1]])
+        src, dst = edge_index[:, 0], edge_index[:, 1]
+        out = PIXLayer(channels=2, weighted=False)(src, dst, px)
+        torch.testing.assert_close(out, px[dst])
 
     def test_dot_weighted_shape(self):
         x = torch.randn(5, 3, 4)

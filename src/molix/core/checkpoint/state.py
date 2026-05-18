@@ -9,7 +9,7 @@ metrics/counter dict passed to hooks and steps.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import torch
 import torch.nn as nn
@@ -50,7 +50,9 @@ class Checkpoint:
 
     def _unwrap_model(self) -> nn.Module:
         """Return the underlying module, unwrapping DDP/FSDP if needed."""
-        return self.model.module if hasattr(self.model, "module") else self.model
+        if hasattr(self.model, "module"):
+            return cast(nn.Module, self.model.module)  # type: ignore[union-attr]
+        return self.model
 
     # ------------------------------------------------------------------
     # Serialization

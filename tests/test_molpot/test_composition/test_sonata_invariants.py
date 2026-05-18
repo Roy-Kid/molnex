@@ -26,13 +26,13 @@ import math
 import cuequivariance as cue
 import cuequivariance_torch as cuet
 import torch
+from tensordict import TensorDict
 from tests.symmetry_helpers import (
     permute_graph,
     rotate_graph,
     translate_graph,
 )
 
-from molix.data.types import GraphBatch
 from molpot.composition import Sonata
 
 # ---------------------------------------------------------------------------
@@ -117,7 +117,7 @@ class TestTranslation:
     """
 
     def test_translation_invariance_open(
-        self, sonata_pipeline: Sonata, sample_neutral_batch_open: GraphBatch
+        self, sonata_pipeline: Sonata, sample_neutral_batch_open: TensorDict
     ) -> None:
         torch.manual_seed(7)
         t = torch.randn(3, dtype=torch.float64) * 5.0
@@ -132,7 +132,7 @@ class TestTranslation:
         )
 
     def test_translation_invariance_periodic_lattice_vector(
-        self, sonata_pipeline: Sonata, sample_neutral_batch_periodic: GraphBatch
+        self, sonata_pipeline: Sonata, sample_neutral_batch_periodic: TensorDict
     ) -> None:
         """Shift everyone by an integer combination of cell[0]'s lattice vectors.
 
@@ -165,7 +165,7 @@ class TestRotation:
     def test_rotation_energy_invariance_open(
         self,
         sonata_pipeline: Sonata,
-        sample_neutral_batch_open: GraphBatch,
+        sample_neutral_batch_open: TensorDict,
         random_rotation_matrix,
     ) -> None:
         torch.manual_seed(11)
@@ -182,7 +182,7 @@ class TestRotation:
     def test_rotation_dipole_equivariance_open(
         self,
         sonata_pipeline: Sonata,
-        sample_neutral_batch_open: GraphBatch,
+        sample_neutral_batch_open: TensorDict,
         random_rotation_matrix,
     ) -> None:
         """``μ_atom(R·x) ≈ R · μ_atom(x)`` (D⁽¹⁾ rep)."""
@@ -199,7 +199,7 @@ class TestRotation:
     def test_rotation_quadrupole_equivariance_open(
         self,
         sonata_pipeline: Sonata,
-        sample_neutral_batch_open: GraphBatch,
+        sample_neutral_batch_open: TensorDict,
         random_rotation_matrix,
     ) -> None:
         """``Θ_atom(R·x) ≈ D⁽²⁾(R) · Θ_atom(x)`` via cuet.Rotation."""
@@ -216,7 +216,7 @@ class TestRotation:
     def test_rotation_energy_invariance_periodic(
         self,
         sonata_pipeline: Sonata,
-        sample_neutral_batch_periodic: GraphBatch,
+        sample_neutral_batch_periodic: TensorDict,
         random_rotation_matrix,
     ) -> None:
         """Joint rotation of pos AND cell leaves periodic energy invariant.
@@ -265,7 +265,7 @@ class TestPermutation:
     accumulators are also exercised."""
 
     def test_permutation_equivariance_open(
-        self, sonata_pipeline: Sonata, sample_neutral_batch_open: GraphBatch
+        self, sonata_pipeline: Sonata, sample_neutral_batch_open: TensorDict
     ) -> None:
         torch.manual_seed(23)
         n = sample_neutral_batch_open["atoms", "Z"].shape[0]
@@ -313,7 +313,7 @@ class TestChargeConservation:
     constant) so the post-projection error is at float64 ULP."""
 
     def test_charge_conservation_neutral(
-        self, sonata_pipeline: Sonata, sample_neutral_batch_periodic: GraphBatch
+        self, sonata_pipeline: Sonata, sample_neutral_batch_periodic: TensorDict
     ) -> None:
         with torch.no_grad():
             out = sonata_pipeline(sample_neutral_batch_periodic.clone())
@@ -329,7 +329,7 @@ class TestChargeConservation:
         )
 
     def test_charge_conservation_charged(
-        self, sonata_pipeline: Sonata, sample_charged_batch_periodic: GraphBatch
+        self, sonata_pipeline: Sonata, sample_charged_batch_periodic: TensorDict
     ) -> None:
         with torch.no_grad():
             out = sonata_pipeline(sample_charged_batch_periodic.clone())
@@ -358,7 +358,7 @@ class TestQuadrupoleTraceless:
     has a bug."""
 
     def test_traceless_open(
-        self, sonata_pipeline: Sonata, sample_neutral_batch_open: GraphBatch
+        self, sonata_pipeline: Sonata, sample_neutral_batch_open: TensorDict
     ) -> None:
         with torch.no_grad():
             out = sonata_pipeline(sample_neutral_batch_open.clone())
@@ -368,7 +368,7 @@ class TestQuadrupoleTraceless:
         assert traces.abs().max() < 1e-12, f"tr(Θ).abs().max()={traces.abs().max():.2e}"
 
     def test_traceless_periodic(
-        self, sonata_pipeline: Sonata, sample_neutral_batch_periodic: GraphBatch
+        self, sonata_pipeline: Sonata, sample_neutral_batch_periodic: TensorDict
     ) -> None:
         with torch.no_grad():
             out = sonata_pipeline(sample_neutral_batch_periodic.clone())

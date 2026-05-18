@@ -1,7 +1,7 @@
-"""Graph-aware collation producing nested GraphBatch TensorDicts.
+"""Graph-aware collation producing nested TensorDict batches.
 
-Collates a list of single-molecule sample dicts into a ``GraphBatch``
-with per-level batch sizes: atoms (N), edges (E), graphs (B).
+Collates a list of single-molecule sample dicts into a nested
+``TensorDict`` with per-level batch sizes: atoms (N), edges (E), graphs (B).
 """
 
 from __future__ import annotations
@@ -9,8 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import torch
-
-from molix.data.types import AtomData, EdgeData, GraphBatch, GraphData
+from tensordict import TensorDict
 
 # ---------------------------------------------------------------------------
 # Target schema
@@ -63,8 +62,8 @@ def _normalize_edge_index(edge_index: torch.Tensor) -> torch.Tensor:
 def collate_molecules(
     samples: list[dict],
     target_schema: TargetSchema = DEFAULT_TARGET_SCHEMA,
-) -> GraphBatch:
-    """Collate molecule samples into a nested GraphBatch.
+) -> TensorDict:
+    """Collate molecule samples into a nested TensorDict.
 
     Each sample is a plain dict with at least ``Z`` and ``pos`` keys.
     Optional: ``edge_index``, ``bond_diff``, ``bond_dist``, ``targets``.
@@ -74,7 +73,7 @@ def collate_molecules(
         target_schema: Declares which targets are graph-level vs atom-level.
 
     Returns:
-        Nested ``GraphBatch`` TensorDict.
+        Nested ``TensorDict`` with ``atoms``, ``edges``, ``graphs`` namespaces.
     """
     if not samples:
         raise ValueError("Cannot collate an empty sample list")
@@ -134,7 +133,7 @@ def collate_molecules(
         atoms_dict[name] = torch.cat(vals, dim=0)
 
     n_total = atoms_dict["Z"].shape[0]
-    atoms = AtomData(atoms_dict, batch_size=[n_total])
+    atoms = TensorDict(atoms_dict, batch_size=[n_total])
 
     # --- Build edge-level TensorDict ---
     if edge_all:
@@ -146,10 +145,10 @@ def collate_molecules(
         if dist_all:
             edges_dict["bond_dist"] = torch.cat(dist_all, dim=0)
         e_total = edges_dict["edge_index"].shape[0]
-        edges = EdgeData(edges_dict, batch_size=[e_total])
+        edges = TensorDict(edges_dict, batch_size=[e_total])
     else:
         # Empty edge data
-        edges = EdgeData(
+        edges = TensorDict(
             edge_index=torch.zeros(0, 2, dtype=torch.long),
             bond_diff=torch.zeros(0, 3),
             bond_dist=torch.zeros(0),
@@ -164,10 +163,10 @@ def collate_molecules(
     for name, vals in graph_targets.items():
         graphs_dict[name] = torch.cat(vals, dim=0)
 
-    graphs = GraphData(graphs_dict, batch_size=[num_graphs])
+    graphs = TensorDict(graphs_dict, batch_size=[num_graphs])
 
-    # --- Assemble top-level GraphBatch ---
-    return GraphBatch(
+    # --- Assemble top-level TensorDict ---
+    return TensorDict(
         atoms=atoms,
         edges=edges,
         graphs=graphs,

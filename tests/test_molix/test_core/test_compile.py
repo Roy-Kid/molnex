@@ -13,8 +13,8 @@ class _SimpleModel(nn.Module):
         super().__init__()
         self.linear = nn.Linear(4, 1)
 
-    def forward(self, x, **_kwargs):
-        return self.linear(x)
+    def forward(self, batch):
+        return self.linear(batch["x"])
 
 
 def _mse_loss(preds, batch):

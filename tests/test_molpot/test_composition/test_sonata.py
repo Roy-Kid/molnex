@@ -26,8 +26,8 @@ from __future__ import annotations
 import pytest
 import torch
 import torch.nn as nn
+from tensordict import TensorDict
 
-from molix.data.types import AtomData, EdgeData, GraphBatch, GraphData
 from molpot import Polarization
 from molpot.composition import Sonata, SonataSpec, build_sonata
 from molpot.heads import EdgeEnergyHead, PermMultipoleHead
@@ -74,7 +74,7 @@ def encoder_lmax1() -> Allegro:
     return _make_encoder(l_max=1)
 
 
-def _make_batch(*, with_cell: bool = False) -> GraphBatch:
+def _make_batch(*, with_cell: bool = False) -> TensorDict:
     """B=2 graphs, N=8 atoms, E=24 edges (full bidirectional within each graph)."""
     pos = torch.tensor(
         [
@@ -112,26 +112,26 @@ def _make_batch(*, with_cell: bool = False) -> GraphBatch:
         cell = torch.eye(3, dtype=torch.float32).unsqueeze(0).repeat(2, 1, 1) * 10.0
         graphs_kwargs["cell"] = cell
 
-    return GraphBatch(
-        atoms=AtomData(Z=Z, pos=pos, batch=batch_idx, batch_size=[8]),
-        edges=EdgeData(
+    return TensorDict(
+        atoms=TensorDict(Z=Z, pos=pos, batch=batch_idx, batch_size=[8]),
+        edges=TensorDict(
             edge_index=edge_index,
             bond_diff=bond_diff,
             bond_dist=bond_dist,
             batch_size=[24],
         ),
-        graphs=GraphData(**graphs_kwargs),
+        graphs=TensorDict(**graphs_kwargs),
         batch_size=[],
     )
 
 
 @pytest.fixture
-def batch() -> GraphBatch:
+def batch() -> TensorDict:
     return _make_batch()
 
 
 @pytest.fixture
-def batch_with_cell() -> GraphBatch:
+def batch_with_cell() -> TensorDict:
     return _make_batch(with_cell=True)
 
 

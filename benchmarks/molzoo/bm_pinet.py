@@ -28,13 +28,13 @@ from pathlib import Path
 import pytest
 import torch
 import torch.nn as nn
+from tensordict import TensorDict
 
-from molix import config, Trainer
+from molix import Trainer, config
 from molix.config import set_precision
 from molix.core.losses.molecular import energy_force_mse, energy_mse
 from molix.core.metrics import MAE, RMSE
 from molix.data import AtomicDress, DataModule, MmapDataset, NeighborList, Pipeline
-from molix.data.types import AtomData, EdgeData, GraphBatch, GraphData
 from molix.datasets import QM9Source, RevMD17Source
 from molix.hooks import (
     CheckpointHook,
@@ -82,8 +82,16 @@ DEFAULTS = {
 }
 
 MOLECULES = [
-    "aspirin", "azobenzene", "benzene", "ethanol", "malonaldehyde",
-    "naphthalene", "paracetamol", "salicylic", "toluene", "uracil",
+    "aspirin",
+    "azobenzene",
+    "benzene",
+    "ethanol",
+    "malonaldehyde",
+    "naphthalene",
+    "paracetamol",
+    "salicylic",
+    "toluene",
+    "uracil",
 ]
 
 # ==============================================================================
@@ -153,24 +161,28 @@ def parse_args() -> argparse.Namespace:
 
     # dataset
     p.add_argument("--dataset", choices=["qm9", "revmd17"], default="qm9")
-    p.add_argument("--molecule", type=str, default="aspirin",
-                   help="revMD17 molecule (default: aspirin)")
-    p.add_argument("--data-dir", type=str, default="data",
-                   help="Root data directory")
+    p.add_argument(
+        "--molecule", type=str, default="aspirin", help="revMD17 molecule (default: aspirin)"
+    )
+    p.add_argument("--data-dir", type=str, default="data", help="Root data directory")
 
     # precision & compile
-    p.add_argument("--precision",
-                   choices=["fp32", "fp64", "amp-fp16", "amp-bf16",
-                            "fp16-mixed", "bf16-mixed"],
-                   default="fp32",
-                   help="amp-fp16/amp-bf16 are aliases for fp16-mixed/bf16-mixed")
-    p.add_argument("--compile", dest="compile_backend",
-                   choices=["none", "dynamo-eager", "aot-eager", "inductor",
-                            "eager", "aot_eager"],
-                   default="none",
-                   help="eager/aot_eager are accepted as legacy aliases")
-    p.add_argument("--compile-mode", choices=["default", "reduce-overhead", "max-autotune"],
-                   default="default")
+    p.add_argument(
+        "--precision",
+        choices=["fp32", "fp64", "amp-fp16", "amp-bf16", "fp16-mixed", "bf16-mixed"],
+        default="fp32",
+        help="amp-fp16/amp-bf16 are aliases for fp16-mixed/bf16-mixed",
+    )
+    p.add_argument(
+        "--compile",
+        dest="compile_backend",
+        choices=["none", "dynamo-eager", "aot-eager", "inductor", "eager", "aot_eager"],
+        default="none",
+        help="eager/aot_eager are accepted as legacy aliases",
+    )
+    p.add_argument(
+        "--compile-mode", choices=["default", "reduce-overhead", "max-autotune"], default="default"
+    )
 
     # training
     p.add_argument("--max-steps", type=int, default=10_000)
@@ -185,25 +197,45 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--r-max", type=float, default=DEFAULTS["r_max"])
     p.add_argument("--n-basis", type=int, default=DEFAULTS["n_basis"])
     p.add_argument("--rank", type=int, choices=[1, 3, 5], default=DEFAULTS["rank"])
-    p.add_argument("--layer-reduction", choices=["mean", "sum", "last"],
-                   default=DEFAULTS["layer_reduction"])
+    p.add_argument(
+        "--layer-reduction", choices=["mean", "sum", "last"], default=DEFAULTS["layer_reduction"]
+    )
     p.add_argument("--qm9-target", type=str, default=DEFAULTS["qm9_target"])
 
     # misc
-    p.add_argument("--work-dir", type=str, default="runs/pinet",
-                   help="Output directory for checkpoints and logs")
-    p.add_argument("--tb-every", type=int, default=DEFAULTS["tb_every"],
-                   help="TensorBoard scalar logging cadence (steps)")
-    p.add_argument("--log-every", type=int, default=DEFAULTS["log_every"],
-                   help="Console-table logging cadence (steps)")
-    p.add_argument("--log-start-step", type=int, default=DEFAULTS["log_start_step"],
-                   help="Suppress train/perf scalar logging before this step "
-                        "(eval points still logged). Keeps the initial loss "
-                        "explosion from compressing plots / log tables.")
-    p.add_argument("--device", type=str, default=None,
-                   help="Device override (default: cuda if available else cpu)")
-    p.add_argument("--smoke", action="store_true",
-                   help="Smoke test: tiny model, 10 steps")
+    p.add_argument(
+        "--work-dir",
+        type=str,
+        default="runs/pinet",
+        help="Output directory for checkpoints and logs",
+    )
+    p.add_argument(
+        "--tb-every",
+        type=int,
+        default=DEFAULTS["tb_every"],
+        help="TensorBoard scalar logging cadence (steps)",
+    )
+    p.add_argument(
+        "--log-every",
+        type=int,
+        default=DEFAULTS["log_every"],
+        help="Console-table logging cadence (steps)",
+    )
+    p.add_argument(
+        "--log-start-step",
+        type=int,
+        default=DEFAULTS["log_start_step"],
+        help="Suppress train/perf scalar logging before this step "
+        "(eval points still logged). Keeps the initial loss "
+        "explosion from compressing plots / log tables.",
+    )
+    p.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="Device override (default: cuda if available else cpu)",
+    )
+    p.add_argument("--smoke", action="store_true", help="Smoke test: tiny model, 10 steps")
 
     return p.parse_args()
 
@@ -260,8 +292,7 @@ def build_pipeline(args: argparse.Namespace) -> Pipeline:
         ),
         name="atomic_dress",
     )
-    pipe.add(NeighborList(cutoff=args.r_max, max_num_pairs=512, pbc=False),
-             name="neighbor_list")
+    pipe.add(NeighborList(cutoff=args.r_max, max_num_pairs=512, pbc=False), name="neighbor_list")
     return pipe.build()
 
 
@@ -276,14 +307,13 @@ def build_datamodule(
     n_total = len(dataset)
     n_test = n_total - n_train - n_val
     if n_test < 0:
-        raise ValueError(
-            f"Dataset has {n_total} samples but n_train+n_val={n_train + n_val}."
-        )
+        raise ValueError(f"Dataset has {n_total} samples but n_train+n_val={n_train + n_val}.")
     # Held-out test partition is kept off-loader (PiNN paper protocol):
     # 110k/10k/10k for QM9, 950/50/~99k for revMD17.
     if n_test > 0:
         train_ds, val_ds, _test_ds = dataset.split(
-            sizes=(n_train, n_val, n_test), seed=args.seed,
+            sizes=(n_train, n_val, n_test),
+            seed=args.seed,
         )
     else:
         train_ds, val_ds = dataset.split(sizes=(n_train, n_val), seed=args.seed)
@@ -294,7 +324,8 @@ def build_datamodule(
         target_schema = RevMD17Source.TARGET_SCHEMA
 
     return DataModule(
-        train_ds, val_ds,
+        train_ds,
+        val_ds,
         target_schema=target_schema,
         batch_nodes=list(batch_nodes),
         batch_size=args.batch_size,
@@ -308,8 +339,10 @@ def build_loss_fn(args: argparse.Namespace):
     if args.dataset == "qm9":
         return energy_mse(target_key=args.qm9_target, pred_key="energy")
     return energy_force_mse(
-        energy_target_key="energy", force_target_key="forces",
-        energy_pred_key="energy", force_pred_key="forces",
+        energy_target_key="energy",
+        force_target_key="forces",
+        energy_pred_key="energy",
+        force_pred_key="forces",
         lambda_F=10.0,
     )
 
@@ -317,23 +350,22 @@ def build_loss_fn(args: argparse.Namespace):
 def _warmup_forward(model: nn.Module, device: torch.device) -> None:
     """Run a dummy batch through the model to initialize LazyLinear parameters."""
     _ft = config.ftype
-    _dummy = GraphBatch(
-        atoms=AtomData(
+    _dummy = TensorDict(
+        atoms=TensorDict(
             Z=torch.tensor([1, 6, 7, 8], dtype=torch.long, device=device),
             pos=torch.randn(4, 3, dtype=_ft, device=device),
             batch=torch.zeros(4, dtype=torch.long, device=device),
             batch_size=[4],
         ),
-        edges=EdgeData(
+        edges=TensorDict(
             edge_index=torch.tensor(
                 [[0, 1], [1, 0], [0, 2], [2, 0], [1, 3], [3, 1], [2, 3], [3, 2]],
-                dtype=torch.long, device=device,
+                dtype=torch.long,
+                device=device,
             ),
-            bond_diff=torch.randn(8, 3, dtype=_ft, device=device),
-            bond_dist=torch.randn(8, dtype=_ft, device=device).abs(),
             batch_size=[8],
         ),
-        graphs=GraphData(
+        graphs=TensorDict(
             num_atoms=torch.tensor([4], dtype=torch.long, device=device),
             batch_size=[1],
         ),
@@ -355,9 +387,7 @@ def main() -> None:
         args.tb_every = 1
         args.log_start_step = 0
 
-    device = torch.device(
-        args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    )
+    device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     torch.manual_seed(args.seed)
 
     # ---- precision (MUST be set before model construction) ----------------
@@ -430,9 +460,12 @@ def main() -> None:
         ]
         log_keys = [
             "train/loss",
-            "train/E_MAE", "train/F_MAE",
-            "eval/E_MAE", "eval/E_RMSE",
-            "eval/F_MAE", "eval/F_RMSE",
+            "train/E_MAE",
+            "train/F_MAE",
+            "eval/E_MAE",
+            "eval/E_RMSE",
+            "eval/F_MAE",
+            "eval/F_RMSE",
         ]
 
     hooks: list = [
@@ -481,7 +514,8 @@ def main() -> None:
         loss_fn=loss_fn,
         optimizer_factory=lambda p: torch.optim.Adam(p, lr=args.lr),
         lr_scheduler_factory=lambda opt: torch.optim.lr_scheduler.ExponentialLR(
-            opt, gamma=decay_gamma_per_step,
+            opt,
+            gamma=decay_gamma_per_step,
         ),
         eval_every_n_steps=args.eval_every,
         hooks=hooks,

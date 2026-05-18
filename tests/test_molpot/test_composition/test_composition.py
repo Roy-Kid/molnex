@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 import torch
+from tensordict import TensorDict
 
-from molix.data.types import AtomData, EdgeData, GraphBatch
 from molpot.composition import LJParameterHead, PotentialComposer
 from molpot.pooling import EdgeToNodePooling, LayerPooling
 from molpot.potentials import LJ126
@@ -41,14 +41,14 @@ def molecular_batch():
     batch_idx = torch.tensor([0, 0, 0, 1, 1], dtype=torch.long)
     Z = torch.tensor([1, 6, 8, 1, 6], dtype=torch.long)
 
-    return GraphBatch(
-        atoms=AtomData(
+    return TensorDict(
+        atoms=TensorDict(
             Z=Z,
             pos=pos,
             batch=batch_idx,
             batch_size=[5],
         ),
-        edges=EdgeData(
+        edges=TensorDict(
             edge_index=edge_index,
             bond_diff=bond_diff,
             bond_dist=bond_dist,

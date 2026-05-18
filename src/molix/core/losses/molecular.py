@@ -3,7 +3,7 @@
 The generic :class:`MSELoss` / :class:`MAELoss` are schema-agnostic: they
 extract values by plain-string key. Training scripts then wrap them in
 a per-script closure that knows *where* to read targets from the
-:class:`GraphBatch` TensorDict — leading to three copies of
+``TensorDict`` — leading to three copies of
 
 .. code-block:: python
 
@@ -12,7 +12,7 @@ a per-script closure that knows *where* to read targets from the
 
 These presets absorb that wrapping. They return ``Callable[[preds, batch], Tensor]``
 that consumes ``preds`` (plain dict from the model forward) and ``batch``
-(a :class:`GraphBatch`), following the convention encoded in
+(a ``TensorDict``), following the convention encoded in
 :class:`~molix.data.collate.TargetSchema`:
 
 * graph-level targets (e.g. ``energy``) live at ``batch["graphs", key]``;

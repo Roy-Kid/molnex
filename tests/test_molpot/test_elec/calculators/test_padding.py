@@ -7,8 +7,8 @@ from ase.io import read
 from ase.neighborlist import neighbor_list
 from torch.nn.utils.rnn import pad_sequence
 
-from molpot.elec import CoulombPotential, EwaldCalculator
-from molpot.elec.lib import compute_batched_kvectors
+from molpot.potentials.elec import CoulombPotential, EwaldCalculator
+from molpot.potentials.elec.lib import compute_batched_kvectors
 
 calc = EwaldCalculator(
     potential=CoulombPotential(smearing=1.0, prefactor=1.0),
@@ -37,9 +37,7 @@ for atoms in systems:
     d_list.append(torch.tensor(d_, dtype=torch.float32))
     pos_list.append(torch.tensor(atoms.get_positions(), dtype=torch.float32))
     cell_list.append(torch.tensor(numpy.array(atoms.get_cell()), dtype=torch.float32))
-    charges_list.append(
-        torch.tensor(atoms.get_initial_charges(), dtype=torch.float32) + 1
-    )
+    charges_list.append(torch.tensor(atoms.get_initial_charges(), dtype=torch.float32) + 1)
     periodic_list.append(torch.tensor(atoms.get_pbc(), dtype=torch.bool))
 
 # Pad neighbor indices/distances to the same length for batching
@@ -49,8 +47,7 @@ d_batch = pad_sequence(d_list, batch_first=True, padding_value=0.0)
 
 # Pair mask: 1 for valid edges, 0 for padded entries
 pair_mask = (
-    torch.arange(i_batch.shape[1])[None, :]
-    < torch.tensor([len(i) for i in i_list])[:, None]
+    torch.arange(i_batch.shape[1])[None, :] < torch.tensor([len(i) for i in i_list])[:, None]
 )
 
 # Pad positions and charges to the same number of atoms
@@ -61,10 +58,7 @@ cell_batch = torch.stack(cell_list)
 periodic_batch = torch.stack(periodic_list)
 
 # Node mask: 1 for valid atoms, 0 for padding
-node_mask = (
-    torch.arange(max_atoms)[None, :]
-    < torch.tensor([p.shape[0] for p in pos_list])[:, None]
-)
+node_mask = torch.arange(max_atoms)[None, :] < torch.tensor([p.shape[0] for p in pos_list])[:, None]
 
 
 kvectors = compute_batched_kvectors(lr_wavelength=4.0, cells=cell_batch)

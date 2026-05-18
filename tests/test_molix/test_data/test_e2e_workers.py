@@ -16,14 +16,13 @@ DataModule(num_workers>0) → iterate.
 from __future__ import annotations
 
 import torch
+from tensordict import TensorDict
 
 from molix.data.collate import TargetSchema
 from molix.data.datamodule import DataModule
-from molix.data.dataset import MmapDataset
 from molix.data.pipeline import Pipeline
 from molix.data.source import InMemorySource
 from molix.data.task import SampleTask
-from molix.data.types import GraphBatch
 
 
 class FakeNeighborList(SampleTask):
@@ -88,7 +87,7 @@ def test_mmap_dataset_with_num_workers_4(tmp_path):
 
     seen_batches = 0
     for batch in dm.train_dataloader():
-        assert isinstance(batch, GraphBatch)
+        assert isinstance(batch, TensorDict)
         assert batch["atoms", "Z"].shape[0] == 4 * 4  # 4 mols × 4 atoms each
         assert batch["graphs", "U0"].shape == (4,)
         assert batch["edges", "edge_index"].shape[1] == 2

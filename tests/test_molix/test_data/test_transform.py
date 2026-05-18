@@ -308,6 +308,7 @@ class TestPipeline:
 
         # Pre-built Node
         from molix.data.pipeline import Node
+
         pipe.node(Node(name="tag", task=lambda s: {**s, "tag": "test"}))
 
         spec = pipe.build()

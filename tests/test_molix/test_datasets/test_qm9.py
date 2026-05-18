@@ -1,4 +1,4 @@
-"""Tests for QM9Source + integration with :meth:`PipelineSpec.cache`."""
+"""Tests for QM9Source + integration with :meth:`PipelineSpec.cache`.
 
 Uses a synthetic QM9 tarball placed in tmp_path to avoid network downloads.
 """
@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from molix.data import MmapDataset, Pipeline
+from molix.data import Pipeline
 from molix.datasets import qm9 as qm9_mod
 from molix.datasets.qm9 import QM9Source
 

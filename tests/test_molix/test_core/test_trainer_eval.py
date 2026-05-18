@@ -94,8 +94,8 @@ class _SimpleModel(nn.Module):
         super().__init__()
         self.linear = nn.Linear(10, 1)
 
-    def forward(self, x, **_kwargs):
-        return self.linear(x)
+    def forward(self, batch):
+        return self.linear(batch["x"])
 
 
 def _simple_loss(predictions, batch):

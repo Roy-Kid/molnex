@@ -18,9 +18,9 @@ from __future__ import annotations
 
 import pytest
 import torch
+from tensordict import TensorDict
 
 from molix.config import config
-from molix.data.types import AtomData, EdgeData, GraphBatch, GraphData
 from molpot.composition import Sonata, build_sonata
 from molzoo import Allegro
 
@@ -77,7 +77,7 @@ def _make_single_graph(
     Z: torch.Tensor,
     cell: torch.Tensor | None,
     total_charge: float,
-) -> GraphBatch:
+) -> TensorDict:
     n = pos.shape[0]
     edge_index = torch.tensor(
         [[i, j] for i in range(n) for j in range(n) if i != j], dtype=torch.long
@@ -95,21 +95,21 @@ def _make_single_graph(
     if cell is not None:
         graphs_kwargs["cell"] = cell.unsqueeze(0)  # (1, 3, 3)
 
-    return GraphBatch(
-        atoms=AtomData(Z=Z, pos=pos, batch=batch_idx, batch_size=[n]),
-        edges=EdgeData(
+    return TensorDict(
+        atoms=TensorDict(Z=Z, pos=pos, batch=batch_idx, batch_size=[n]),
+        edges=TensorDict(
             edge_index=edge_index,
             bond_diff=bond_diff,
             bond_dist=bond_dist,
             batch_size=[edge_index.shape[0]],
         ),
-        graphs=GraphData(**graphs_kwargs),
+        graphs=TensorDict(**graphs_kwargs),
         batch_size=[],
     )
 
 
-def _stack_graphs(graphs: list[GraphBatch]) -> GraphBatch:
-    """Concatenate single-graph ``GraphBatch`` instances into one batch.
+def _stack_graphs(graphs: list[TensorDict]) -> TensorDict:
+    """Concatenate single-graph ``TensorDict`` instances into one batch.
 
     ``cell`` is per-graph; for any graph that was constructed without a
     cell, we slot a zero (3, 3) tensor — the EwaldMultipoleEnergy
@@ -145,15 +145,15 @@ def _stack_graphs(graphs: list[GraphBatch]) -> GraphBatch:
 
     num_atoms = torch.tensor([g["atoms", "pos"].shape[0] for g in graphs], dtype=torch.long)
 
-    return GraphBatch(
-        atoms=AtomData(Z=Z, pos=pos, batch=batch_idx, batch_size=[pos.shape[0]]),
-        edges=EdgeData(
+    return TensorDict(
+        atoms=TensorDict(Z=Z, pos=pos, batch=batch_idx, batch_size=[pos.shape[0]]),
+        edges=TensorDict(
             edge_index=edge_index,
             bond_diff=bond_diff,
             bond_dist=bond_dist,
             batch_size=[edge_index.shape[0]],
         ),
-        graphs=GraphData(
+        graphs=TensorDict(
             num_atoms=num_atoms,
             total_charge=total_charge,
             cell=cell_stacked,

@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+from tensordict import TensorDict
 
-from molix.data.types import AtomData, EdgeData, GraphBatch, GraphData
 from molpot.heads import EdgeEnergyHead
 from molrep.utils.equivariance import (
     random_rotation_matrix,
@@ -37,8 +37,8 @@ def _build_graph(
     r_cut: float,
     *,
     with_graphs: bool = True,
-) -> GraphBatch:
-    """Build a full-connectivity GraphBatch (all pairs within ``r_cut``)."""
+) -> TensorDict:
+    """Build a full-connectivity TensorDict (all pairs within ``r_cut``)."""
     n = pos.shape[0]
     pairs = []
     diffs = []
@@ -57,13 +57,13 @@ def _build_graph(
     bond_diff = torch.stack(diffs, dim=0)
     bond_dist = torch.tensor(dists, dtype=pos.dtype)
 
-    atoms = AtomData(
+    atoms = TensorDict(
         Z=Z,
         pos=pos,
         batch=torch.zeros(n, dtype=torch.long),
         batch_size=[n],
     )
-    edges = EdgeData(
+    edges = TensorDict(
         edge_index=edge_index,
         bond_diff=bond_diff,
         bond_dist=bond_dist,
@@ -71,8 +71,8 @@ def _build_graph(
     )
     td = {"atoms": atoms, "edges": edges}
     if with_graphs:
-        td["graphs"] = GraphData(num_atoms=torch.tensor([n], dtype=torch.long), batch_size=[1])
-    return GraphBatch(**td, batch_size=[])
+        td["graphs"] = TensorDict(num_atoms=torch.tensor([n], dtype=torch.long), batch_size=[1])
+    return TensorDict(**td, batch_size=[])
 
 
 def _build_encoder(
@@ -113,7 +113,7 @@ def _build_energy_model(encoder: Allegro, avg_nbr: float) -> nn.Module:
             self.encoder = encoder
             self.head = head
 
-        def forward(self, batch: GraphBatch) -> dict[str, torch.Tensor]:
+        def forward(self, batch: TensorDict) -> dict[str, torch.Tensor]:
             batch = self.encoder(batch)
             return self.head(batch)
 

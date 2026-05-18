@@ -15,7 +15,6 @@ Two modes of operation:
 from __future__ import annotations
 
 import argparse
-import math
 import statistics
 import time
 from contextlib import contextmanager
@@ -23,8 +22,8 @@ from contextlib import contextmanager
 import pytest
 import torch
 import torch._dynamo
+from tensordict import TensorDict
 
-from molix.data.types import AtomData, EdgeData, GraphBatch, GraphData
 from molpot.heads import EdgeEnergyHead
 from molzoo.allegro import Allegro
 
@@ -63,7 +62,7 @@ def head(module):
 def batch(graph_batch_td):
     """Add a ``graphs`` subdict so ``EdgeEnergyHead`` can read ``batch_size``."""
     n_graphs = graph_batch_td["atoms"].batch.max().item() + 1
-    graph_batch_td["graphs"] = GraphData(
+    graph_batch_td["graphs"] = TensorDict(
         num_atoms=torch.tensor(
             [(graph_batch_td["atoms", "batch"] == g).sum() for g in range(n_graphs)],
             dtype=torch.long,
@@ -115,7 +114,7 @@ def _build_random_qm9_batch(
     num_elements: int,
     seed: int,
     device: torch.device,
-) -> GraphBatch:
+) -> TensorDict:
     torch.manual_seed(seed)
     n_atoms_total = n_graphs * n_atoms_per_graph
 
@@ -142,17 +141,15 @@ def _build_random_qm9_batch(
     bond_diff = torch.stack(diffs).contiguous()
     bond_dist = torch.stack(dists).contiguous()
 
-    return GraphBatch(
-        atoms=AtomData(
-            Z=Z, pos=pos, batch=batch_idx, batch_size=[n_atoms_total]
-        ),
-        edges=EdgeData(
+    return TensorDict(
+        atoms=TensorDict(Z=Z, pos=pos, batch=batch_idx, batch_size=[n_atoms_total]),
+        edges=TensorDict(
             edge_index=edge_index,
             bond_diff=bond_diff.float(),
             bond_dist=bond_dist.float(),
             batch_size=[edge_index.shape[0]],
         ),
-        graphs=GraphData(
+        graphs=TensorDict(
             num_atoms=torch.full((n_graphs,), n_atoms_per_graph, dtype=torch.long, device=device),
             batch_size=[n_graphs],
         ),
@@ -244,7 +241,7 @@ def main() -> None:
     print(
         f"## Model: L={args.num_layers}, l_max={args.l_max}, "
         f"F={args.num_scalar_features}, u={args.num_tensor_features}, "
-        f"params={n_params/1e6:.3f} M\n"
+        f"params={n_params / 1e6:.3f} M\n"
     )
 
     base_batch = _build_random_qm9_batch(
@@ -259,7 +256,7 @@ def main() -> None:
     n_edges = base_batch["edges", "edge_index"].shape[0]
     print(
         f"## Batch: graphs={args.n_graphs}, atoms={n_atoms}, edges={n_edges}, "
-        f"⟨|N|⟩={n_edges/n_atoms:.1f}\n"
+        f"⟨|N|⟩={n_edges / n_atoms:.1f}\n"
     )
 
     # --- forward only (no_grad) -------------------------------------------
@@ -292,8 +289,8 @@ def main() -> None:
     print("|----------|-------|")
     print(f"| Forward time / batch | {fwd_med:.2f} ± {fwd_std:.2f} ms |")
     print(f"| Forward+backward time / batch | {bwd_med:.2f} ± {bwd_std:.2f} ms |")
-    print(f"| Forward / edge | {fwd_med/n_edges*1e3:.2f} µs |")
-    print(f"| Forward+backward / edge | {bwd_med/n_edges*1e3:.2f} µs |")
+    print(f"| Forward / edge | {fwd_med / n_edges * 1e3:.2f} µs |")
+    print(f"| Forward+backward / edge | {bwd_med / n_edges * 1e3:.2f} µs |")
     if device.type == "cuda":
         print(f"| Forward peak memory | {fwd_peak:.1f} MiB |")
         print(f"| Forward+backward peak memory | {bwd_peak:.1f} MiB |")
@@ -319,13 +316,8 @@ def main() -> None:
                 with torch.no_grad():
                     head(encoder(b.clone()))
 
-            med, _ = _time_callable(
-                f, device=device, warmup=2, repeats=10
-            )
-            print(
-                f"| {n_graphs} | {n_a} | {n_e} | "
-                f"{med:.2f} | {med/n_e*1e3:.2f} |"
-            )
+            med, _ = _time_callable(f, device=device, warmup=2, repeats=10)
+            print(f"| {n_graphs} | {n_a} | {n_e} | {med:.2f} | {med / n_e * 1e3:.2f} |")
 
 
 if __name__ == "__main__":

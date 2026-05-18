@@ -78,7 +78,7 @@ class BatchTask(Task):
 
     Executed after :func:`~molix.data.collate.collate_molecules` inside the
     DataLoader's ``collate_fn``. Input and output are both
-    :class:`~molix.data.types.GraphBatch` (nested TensorDict), not raw
+    ``TensorDict`` (nested), not raw
     sample dicts. Runs on the hot path of every training step — keep it
     fast.
 

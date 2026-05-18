@@ -76,12 +76,10 @@ def _export_with_runtime_constants(
     meta = {
         "device": device,
         "input_shapes": [
-            list(t.shape) if isinstance(t, torch.Tensor) else None
-            for t in device_inputs
+            list(t.shape) if isinstance(t, torch.Tensor) else None for t in device_inputs
         ],
         "input_dtypes": [
-            str(t.dtype) if isinstance(t, torch.Tensor) else type(t).__name__
-            for t in device_inputs
+            str(t.dtype) if isinstance(t, torch.Tensor) else type(t).__name__ for t in device_inputs
         ],
         "model_class": model.__class__.__name__,
     }

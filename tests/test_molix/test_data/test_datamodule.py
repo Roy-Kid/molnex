@@ -123,11 +123,11 @@ class TestDataLoaders:
 
 class TestCollation:
     def test_batch_has_graph_batch_structure(self, _dm_factory):
-        from molix.data.types import GraphBatch
+        from tensordict import TensorDict
 
         dm = _dm_factory(batch_size=4)
         batch = next(iter(dm.train_dataloader()))
-        assert isinstance(batch, GraphBatch)
+        assert isinstance(batch, TensorDict)
 
     def test_targets_in_graphs(self, _dm_factory):
         dm = _dm_factory(batch_size=4)
@@ -265,17 +265,14 @@ class TestEpochHook:
 
 class TestExplicitCachedPipeline:
     def test_end_to_end(self, tmp_path):
-        """Explicit 3-step: cache, split, DataModule — yields GraphBatch."""
+        """Explicit 3-step: cache, split, DataModule — yields TensorDict."""
+        from tensordict import TensorDict
+
         from molix.data import InMemorySource, NeighborList, Pipeline
-        from molix.data.types import GraphBatch
 
         samples = _make_samples(10)
         source = InMemorySource(samples)
-        pipe = (
-            Pipeline("smoke")
-            .add(NeighborList(cutoff=3.0, max_num_pairs=32, pbc=False))
-            .build()
-        )
+        pipe = Pipeline("smoke").add(NeighborList(cutoff=3.0, max_num_pairs=32, pbc=False)).build()
         dag = pipe.cache(source, base_dir=tmp_path, extra={"n_train": "6"})
         full = dag.dataset(mmap=True)
         train_ds, val_ds, test_ds = full.split(sizes=(6, 2, 2), seed=7)
@@ -293,9 +290,9 @@ class TestExplicitCachedPipeline:
         assert train_ds.avg_num_neighbors > 0.0
         assert train_ds.max_atoms <= full.max_atoms
 
-        # DataLoader produces GraphBatch
+        # DataLoader produces TensorDict
         batch = next(iter(dm.train_dataloader()))
-        assert isinstance(batch, GraphBatch)
+        assert isinstance(batch, TensorDict)
         assert batch["atoms", "Z"].shape[0] == 4  # 2 mols × 2 atoms
 
     def test_two_way_split(self, tmp_path):

@@ -59,9 +59,9 @@ import cuequivariance_torch as cuet
 import torch
 import torch.nn as nn
 from pydantic import BaseModel, ConfigDict, Field
+from tensordict import TensorDict
 
 from molix import config
-from molix.data.types import GraphBatch
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -351,7 +351,7 @@ class PermMultipoleHead(nn.Module):
     # ------------------------------------------------------------------
     # forward
     # ------------------------------------------------------------------
-    def forward(self, batch: GraphBatch) -> dict[str, torch.Tensor]:
+    def forward(self, batch: TensorDict) -> dict[str, torch.Tensor]:
         edge_features = batch["edges", "edge_features"]  # (E, F)
         edge_index = batch["edges", "edge_index"]  # (E, 2)
         atom_batch = batch["atoms", "batch"]  # (N,)
@@ -519,7 +519,7 @@ class PermMultipoleHead(nn.Module):
         self,
         q: torch.Tensor,
         atom_batch: torch.Tensor,
-        batch: GraphBatch,
+        batch: TensorDict,
         n_graphs: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         q_target = batch["graphs", self.total_charge_key].to(q.dtype)

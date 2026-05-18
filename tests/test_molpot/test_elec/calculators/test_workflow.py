@@ -1,23 +1,19 @@
-"""
-Basic tests if the calculator works and is torch scriptable. Actual tests are done
-for the metatensor calculator.
-"""
+"""Basic calculator workflow and torch.compile smoke tests."""
 
-import io
 import sys
 from pathlib import Path
 
 import pytest
 import torch
 
-from molpot.elec import (
+from molpot.potentials.elec import (
     Calculator,
     CoulombPotential,
     EwaldCalculator,
     P3MCalculator,
     PMECalculator,
 )
-from molpot.elec.prefactors import kcalmol_A
+from molpot.potentials.elec.prefactors import kcalmol_A
 
 sys.path.append(str(Path(__file__).parents[1]))
 from helpers import DEVICES, DTYPES
@@ -64,9 +60,7 @@ MESH_SPACING = SMEARING / 4
 class TestWorkflow:
     def cscl_system(self, device=None, dtype=None):
         """CsCl crystal. Same as in the madelung test"""
-        positions = torch.tensor(
-            [[0, 0, 0], [0.5, 0.5, 0.5]], dtype=dtype, device=device
-        )
+        positions = torch.tensor([[0, 0, 0], [0.5, 0.5, 0.5]], dtype=dtype, device=device)
         charges = torch.tensor([1.0, -1.0], dtype=dtype, device=device).reshape((-1, 1))
         cell = torch.eye(3, dtype=dtype, device=device)
         neighbor_indices = torch.tensor([[0, 1]], dtype=torch.int64, device=device)
@@ -133,22 +127,20 @@ class TestWorkflow:
         calculator.to(device=device, dtype=dtype)
         self.check_operation(calculator=calculator, device=device, dtype=dtype)
 
-    def test_operation_as_torch_script(self, CalculatorClass, params, device, dtype):
-        """Run `check_operation` as a compiled torch script module."""
+    def test_operation_as_torch_compile(self, CalculatorClass, params, device, dtype):
+        """Run `check_operation` through torch.compile."""
         calculator = CalculatorClass(**params)
         calculator.to(device=device, dtype=dtype)
-        scripted = torch.jit.script(calculator)
-        self.check_operation(calculator=scripted, device=device, dtype=dtype)
+        compiled = torch.compile(calculator, backend="eager")
+        self.check_operation(calculator=compiled, device=device, dtype=dtype)
 
-    def test_save_load(self, CalculatorClass, params, device, dtype):
-        """Test if the calculator can be saved and loaded."""
+    def test_compile_repeated_calls(self, CalculatorClass, params, device, dtype):
+        """Compiled calculators should be reusable across calls."""
         calculator = CalculatorClass(**params)
         calculator.to(device=device, dtype=dtype)
-        scripted = torch.jit.script(calculator)
-        with io.BytesIO() as buffer:
-            torch.jit.save(scripted, buffer)
-            buffer.seek(0)
-            torch.jit.load(buffer)
+        compiled = torch.compile(calculator, backend="eager")
+        self.check_operation(calculator=compiled, device=device, dtype=dtype)
+        self.check_operation(calculator=compiled, device=device, dtype=dtype)
 
     def test_not_nan(self, CalculatorClass, params, device, dtype):
         """Make sure derivatives are not NaN."""
@@ -162,14 +154,10 @@ class TestWorkflow:
         energy = calculator.forward(*system).sum()
 
         # charges
-        assert not torch.isnan(
-            torch.autograd.grad(energy, system[0], retain_graph=True)[0]
-        ).any()
+        assert not torch.isnan(torch.autograd.grad(energy, system[0], retain_graph=True)[0]).any()
 
         # neighbor distances
-        assert not torch.isnan(
-            torch.autograd.grad(energy, system[-1], retain_graph=True)[0]
-        ).any()
+        assert not torch.isnan(torch.autograd.grad(energy, system[-1], retain_graph=True)[0]).any()
 
         # positions, cell
         if CalculatorClass in [PMECalculator, P3MCalculator]:
@@ -181,12 +169,15 @@ class TestWorkflow:
             ).any()
 
     def test_smearing_incompatability(self, CalculatorClass, params, device, dtype):
-        """Test that the calculator raises an error if the potential and calculator are incompatible."""
-        if type(CalculatorClass) in [EwaldCalculator, PMECalculator, P3MCalculator]:
+        """Test calculator/potential incompatibility errors."""
+        if CalculatorClass in [EwaldCalculator, PMECalculator, P3MCalculator]:
+            params = params.copy()
             params["potential"] = CoulombPotential(smearing=None)
-            with pytest.raises(
-                TypeError, match="Must specify smearing to use a potential with .*"
-            ):
+            match = (
+                r"Must specify (range radius|smearing) to use a potential with "
+                r".*Calculator"
+            )
+            with pytest.raises(ValueError, match=match):
                 CalculatorClass(**params)
 
     def test_periodicity_true_value(
@@ -199,8 +190,8 @@ class TestWorkflow:
         """Test that values coincide with values from LAMMPS"""
         true_value = -383.44635
         if CalculatorClass in [EwaldCalculator]:
-            charges, cell, positions, neighbor_indices, neighbor_distances = (
-                self.cscl_system(device=device, dtype=dtype)
+            charges, cell, positions, neighbor_indices, neighbor_distances = self.cscl_system(
+                device=device, dtype=dtype
             )
             cell = torch.tensor([10, 10, 30], dtype=dtype, device=device).diag()
             res = (
@@ -230,11 +221,10 @@ class TestWorkflow:
         device,
         dtype,
     ):
-        """Test that the calculator raises an error if the potential and calculator are incompatible."""
-        params["potential"] = torch.jit.script(params["potential"])
-        with pytest.raises(
-            TypeError, match="Potential must be an instance of Potential, got.*"
-        ):
+        """Test calculator/potential type errors."""
+        params = params.copy()
+        params["potential"] = torch.nn.Identity()
+        with pytest.raises(TypeError, match="Potential must be an instance of Potential, got.*"):
             CalculatorClass(**params)
 
 

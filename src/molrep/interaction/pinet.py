@@ -87,11 +87,11 @@ class PILayer(nn.Module):
 
     def forward(
         self,
-        edge_index: torch.Tensor,
+        src: torch.Tensor,
+        dst: torch.Tensor,
         prop: torch.Tensor,
         basis: torch.Tensor,
     ) -> torch.Tensor:
-        src, dst = edge_index[:, 0], edge_index[:, 1]
         inter = torch.cat([prop[src], prop[dst]], dim=-1)
         weights = self.ff_layer(inter).reshape(-1, self.out_dim, self.n_basis)
         return torch.einsum("ecb,eb->ec", weights, basis)
@@ -102,15 +102,12 @@ class IPLayer(nn.Module):
 
     def forward(
         self,
-        edge_index: torch.Tensor,
+        src: torch.Tensor,
         prop: torch.Tensor,
         inter: torch.Tensor,
     ) -> torch.Tensor:
-        src = edge_index[:, 0]
-        out_shape = (prop.shape[0], *inter.shape[1:])
-        out = torch.zeros(out_shape, dtype=inter.dtype, device=inter.device)
-        expand_src = src.view(-1, *([1] * (inter.dim() - 1))).expand_as(inter)
-        out.scatter_add_(0, expand_src, inter)
+        out = prop.new_zeros(prop.shape[0], *inter.shape[1:])
+        out.index_add_(0, src, inter)
         return out
 
 
@@ -141,8 +138,7 @@ class PIXLayer(nn.Module):
             self.wi = nn.Linear(self.channels, self.channels, bias=False, dtype=config.ftype)
             self.wj = nn.Linear(self.channels, self.channels, bias=False, dtype=config.ftype)
 
-    def forward(self, edge_index: torch.Tensor, px: torch.Tensor) -> torch.Tensor:
-        src, dst = edge_index[:, 0], edge_index[:, 1]
+    def forward(self, src: torch.Tensor, dst: torch.Tensor, px: torch.Tensor) -> torch.Tensor:
         px_i = px[src]
         px_j = px[dst]
         if self.weighted:
@@ -194,13 +190,14 @@ class InvarLayer(nn.Module):
 
     def forward(
         self,
-        edge_index: torch.Tensor,
+        src: torch.Tensor,
+        dst: torch.Tensor,
         p1: torch.Tensor,
         basis: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        i1 = self.pi_layer(edge_index, p1, basis)
+        i1 = self.pi_layer(src, dst, p1, basis)
         i1 = self.ii_layer(i1)
-        p1_new = self.ip_layer(edge_index, p1, i1)
+        p1_new = self.ip_layer(src, p1, i1)
         p1_new = self.pp_layer(p1_new)
         return p1_new, i1
 
@@ -226,16 +223,18 @@ class EquivarLayer(nn.Module):
 
     def forward(
         self,
-        edge_index: torch.Tensor,
+        src: torch.Tensor,
+        dst: torch.Tensor,
         px: torch.Tensor,
         i1: torch.Tensor,
         diff: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        ix = self.pi_layer(edge_index, px)
-        ix = self.scale_layer(ix, i1)
-        scaled_diff = self.scale_layer(diff.unsqueeze(-1), i1)
-        ix = ix + scaled_diff
-        px_new = self.ip_layer(edge_index, px, ix)
+        # Equivalent to:
+        #     ix = self.scale_layer(self.pi_layer(...), i1)
+        #     ix = ix + self.scale_layer(diff.unsqueeze(-1), i1)
+        # but with one broadcast multiply instead of two scales + add.
+        ix = (self.pi_layer(src, dst, px) + diff.unsqueeze(-1)) * i1.unsqueeze(-2)
+        px_new = self.ip_layer(src, px, ix)
         px_new = self.pp_layer(px_new)
         dotted_px = self.dot_layer(px_new)
         return px_new, ix, dotted_px
@@ -302,7 +301,8 @@ class GCBlock(nn.Module):
         basis: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
         edge_index = tensors["edge_index"]
-        p1, i1 = self.invar_p1_layer(edge_index, tensors["p1"], basis)
+        src, dst = edge_index[:, 0], edge_index[:, 1]
+        p1, i1 = self.invar_p1_layer(src, dst, tensors["p1"], basis)
 
         i1_chunks = torch.chunk(i1, self.n_props, dim=-1)
         px_list = [p1]
@@ -310,7 +310,8 @@ class GCBlock(nn.Module):
 
         if self.rank >= 3:
             p3, i3, dotted_p3 = self.equivar_p3_layer(
-                edge_index,
+                src,
+                dst,
                 tensors["p3"],
                 i1_chunks[1],
                 tensors["d3"],
@@ -321,7 +322,8 @@ class GCBlock(nn.Module):
 
         if self.rank >= 5:
             p5, i5, dotted_p5 = self.equivar_p5_layer(
-                edge_index,
+                src,
+                dst,
                 tensors["p5"],
                 i1_chunks[2],
                 tensors["d5"],

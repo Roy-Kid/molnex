@@ -2,7 +2,7 @@
 
 Provides two generators:
 
-- :class:`MockBatch` — callable that produces a :class:`~molix.data.types.GraphBatch`
+- :class:`MockBatch` — produces a nested ``TensorDict`` batch
   with configurable (or random) atom / edge / graph counts.  Used with
   :class:`~molix.profiler.module.ModuleProfiler`.
 
@@ -18,7 +18,7 @@ Example::
 
     # Fixed shape — same batch every call
     factory = MockBatch(n_atoms=64, n_edges=512, n_graphs=8)
-    batch = factory()   # -> GraphBatch
+    batch = factory()   # -> TensorDict
 
     # Variable shape — drawn from a range on each call
     factory = MockBatch(n_atoms=(30, 100), n_edges=(100, 600), n_graphs=(2, 8))
@@ -35,8 +35,7 @@ import random
 from typing import Union
 
 import torch
-
-from molix.data.types import AtomData, EdgeData, GraphBatch, GraphData
+from tensordict import TensorDict
 
 # Type alias: int means fixed; tuple[int, int] means sample from [lo, hi]
 _IntOrRange = Union[int, tuple[int, int]]
@@ -63,7 +62,7 @@ def _resolve(value: _IntOrRange) -> int:
 
 
 class MockBatch:
-    """Callable factory that generates synthetic :class:`~molix.data.types.GraphBatch` instances.
+    """Callable factory that generates synthetic ``TensorDict`` instances.
 
     Useful for profiling model forward/backward passes without a real dataset.
     Shapes can be fixed or randomised per call to stress-test variable-size inputs.
@@ -79,7 +78,7 @@ class MockBatch:
     Example::
 
         factory = MockBatch(n_atoms=64, n_edges=512, n_graphs=8)
-        batch = factory()   # produces a GraphBatch
+        batch = factory()   # produces a TensorDict
 
         # Variable sizes — good for stress testing
         factory = MockBatch(n_atoms=(32, 128), n_edges=(128, 1024), n_graphs=(2, 16))
@@ -107,11 +106,11 @@ class MockBatch:
         if seed is not None:
             self._torch_gen.manual_seed(seed)
 
-    def __call__(self) -> GraphBatch:
-        """Generate a fresh :class:`~molix.data.types.GraphBatch`.
+    def __call__(self) -> TensorDict:
+        """Generate a fresh ``TensorDict``.
 
         Returns:
-            A ``GraphBatch`` with random tensor values and the configured shape.
+            A ``TensorDict`` with random tensor values and the configured shape.
         """
         n_a = _resolve(self.n_atoms)
         n_e = _resolve(self.n_edges)
@@ -130,7 +129,7 @@ class MockBatch:
             for graph_idx, start in enumerate(boundaries):
                 batch_vec[start:] = graph_idx + 1
 
-        atoms = AtomData({"Z": Z, "pos": pos, "batch": batch_vec}, batch_size=[n_a])
+        atoms = TensorDict({"Z": Z, "pos": pos, "batch": batch_vec}, batch_size=[n_a])
 
         # --- Edge data ---
         if n_e > 0 and n_a > 1:
@@ -146,16 +145,16 @@ class MockBatch:
             bond_dist = torch.zeros(0, device=dev)
             n_e = 0
 
-        edges = EdgeData(
+        edges = TensorDict(
             {"edge_index": edge_index, "bond_diff": bond_diff, "bond_dist": bond_dist},
             batch_size=[n_e],
         )
 
         # --- Graph data ---
         num_atoms_per_graph = torch.bincount(batch_vec, minlength=n_g).long()
-        graphs = GraphData({"num_atoms": num_atoms_per_graph}, batch_size=[n_g])
+        graphs = TensorDict({"num_atoms": num_atoms_per_graph}, batch_size=[n_g])
 
-        return GraphBatch({"atoms": atoms, "edges": edges, "graphs": graphs}, batch_size=[])
+        return TensorDict({"atoms": atoms, "edges": edges, "graphs": graphs}, batch_size=[])
 
     def describe(self) -> str:
         """Return a human-readable description of the batch shape configuration.

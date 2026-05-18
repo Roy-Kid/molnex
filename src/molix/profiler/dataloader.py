@@ -126,7 +126,7 @@ class DataLoaderResult:
 
 
 def _extract_batch_counts(batch: object) -> tuple[int, int]:
-    """Extract (n_atoms, n_graphs) from a GraphBatch."""
+    """Extract (n_atoms, n_graphs) from a TensorDict batch."""
     try:
         n_atoms = int(batch["atoms"]["Z"].shape[0])  # type: ignore[index]
         n_graphs = int(batch["graphs"]["num_atoms"].shape[0])  # type: ignore[index]

@@ -12,9 +12,7 @@ from molzoo.mace import MACE
 def module():
     """Create a MACE encoder."""
     return MACE(
-        node_attr_specs=[
-            DiscreteEmbeddingSpec(input_key="Z", num_classes=5, emb_dim=16)
-        ],
+        node_attr_specs=[DiscreteEmbeddingSpec(input_key="Z", num_classes=5, emb_dim=16)],
         num_elements=5,
         num_features=16,
         r_max=5.0,

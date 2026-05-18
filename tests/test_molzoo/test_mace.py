@@ -6,7 +6,6 @@ import cuequivariance_torch as cuet
 import pytest
 import torch
 import torch.nn as nn
-from tests.utils import assert_module_compiles, assert_module_exports, assert_outputs_close
 
 from molrep.embedding.angular import SphericalHarmonics
 from molrep.embedding.cutoff import CosineCutoff
@@ -26,6 +25,7 @@ from molzoo.mace import (
     EmbeddingBlock,
     InteractionBlock,
 )
+from tests.utils import assert_module_compiles, assert_module_exports, assert_outputs_close
 
 
 class TestEmbeddingBlock:

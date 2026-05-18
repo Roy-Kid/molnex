@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 import torch
+from tensordict import TensorDict
 
-from molix.data.types import AtomData, EdgeData, GraphBatch, GraphData
 from molpot.heads import EdgeEnergyHead
 
 
@@ -14,21 +14,21 @@ def _stub_batch(*, n_atoms=3, n_edges=6, feat_dim=8):
     edge_index = torch.tensor([[0, 1], [1, 0], [1, 2], [2, 1], [0, 2], [2, 0]], dtype=torch.long)[
         :n_edges
     ]
-    atoms = AtomData(
+    atoms = TensorDict(
         Z=torch.tensor([1, 6, 8][:n_atoms]),
         pos=torch.randn(n_atoms, 3),
         batch=torch.zeros(n_atoms, dtype=torch.long),
         batch_size=[n_atoms],
     )
-    edges = EdgeData(
+    edges = TensorDict(
         edge_index=edge_index,
         bond_diff=torch.randn(n_edges, 3),
         bond_dist=torch.rand(n_edges) + 0.5,
         batch_size=[n_edges],
     )
     edges["edge_features"] = torch.randn(n_edges, feat_dim)
-    graphs = GraphData(num_atoms=torch.tensor([n_atoms]), batch_size=[1])
-    return GraphBatch(atoms=atoms, edges=edges, graphs=graphs, batch_size=[])
+    graphs = TensorDict(num_atoms=torch.tensor([n_atoms]), batch_size=[1])
+    return TensorDict(atoms=atoms, edges=edges, graphs=graphs, batch_size=[])
 
 
 class TestShape:
@@ -103,21 +103,21 @@ class TestLinearReadout:
 class TestEmptyGraph:
     def test_zero_edges_give_zero_energy(self):
         """Graph with no edges → scatter sum is zero tensor."""
-        atoms = AtomData(
+        atoms = TensorDict(
             Z=torch.tensor([1]),
             pos=torch.zeros(1, 3),
             batch=torch.zeros(1, dtype=torch.long),
             batch_size=[1],
         )
-        edges = EdgeData(
+        edges = TensorDict(
             edge_index=torch.empty(0, 2, dtype=torch.long),
             bond_diff=torch.empty(0, 3),
             bond_dist=torch.empty(0),
             batch_size=[0],
         )
         edges["edge_features"] = torch.empty(0, 8)
-        graphs = GraphData(num_atoms=torch.tensor([1]), batch_size=[1])
-        b = GraphBatch(atoms=atoms, edges=edges, graphs=graphs, batch_size=[])
+        graphs = TensorDict(num_atoms=torch.tensor([1]), batch_size=[1])
+        b = TensorDict(atoms=atoms, edges=edges, graphs=graphs, batch_size=[])
 
         head = EdgeEnergyHead(input_dim=8, hidden_dim=4, avg_num_neighbors=1.0)
         with torch.no_grad():

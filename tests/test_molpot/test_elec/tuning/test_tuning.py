@@ -4,14 +4,14 @@ from pathlib import Path
 import pytest
 import torch
 
-from molpot.elec import (
+from molpot.potentials.elec import (
     CoulombPotential,
     EwaldCalculator,
     P3MCalculator,
     PMECalculator,
 )
-from molpot.elec.tuning import tune_ewald, tune_p3m, tune_pme
-from molpot.elec.tuning.tuner import TunerBase
+from molpot.potentials.elec.tuning import tune_ewald, tune_p3m, tune_pme
+from molpot.potentials.elec.tuning.tuner import TunerBase
 
 sys.path.append(str(Path(__file__).parents[1]))
 from helpers import DEVICES, DTYPES, define_crystal, neighbor_list
@@ -67,9 +67,7 @@ def test_parameter_choose(
     the reference values and that all branches of the from_accuracy method are covered.
     """
     # Get input parameters and adjust to account for scaling
-    pos, charges, cell, madelung_ref, num_units = define_crystal(
-        dtype=dtype, device=device
-    )
+    pos, charges, cell, madelung_ref, num_units = define_crystal(dtype=dtype, device=device)
 
     # Compute neighbor list
     neighbor_indices, neighbor_distances = neighbor_list(
@@ -205,9 +203,7 @@ def test_invalid_shape_positions(tune):
 @pytest.mark.parametrize("tune", [tune_ewald, tune_pme, tune_p3m])
 def test_invalid_shape_cell(tune):
     charges, _, positions = system()
-    match = (
-        r"`cell` must be a tensor with shape \[3, 3\], got tensor with shape \[2, 2\]"
-    )
+    match = r"`cell` must be a tensor with shape \[3, 3\], got tensor with shape \[2, 2\]"
     with pytest.raises(ValueError, match=match):
         tune(
             charges=charges,
@@ -222,7 +218,10 @@ def test_invalid_shape_cell(tune):
 @pytest.mark.parametrize("tune", [tune_ewald, tune_pme, tune_p3m])
 def test_invalid_dtype_cell(tune):
     charges, _, positions = system()
-    match = r"type of `cell` \(torch.float64\) must be same as that of the `positions` class \(torch.float32\)"
+    match = (
+        r"type of `cell` \(torch.float64\) must be same as that of the "
+        r"`positions` class \(torch.float32\)"
+    )
     with pytest.raises(TypeError, match=match):
         tune(
             charges=charges,

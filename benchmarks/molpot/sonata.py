@@ -47,8 +47,8 @@ from typing import Any
 import pytest
 import torch
 import torch.nn as nn
+from tensordict import TensorDict
 
-from molix.data.types import AtomData, EdgeData, GraphBatch, GraphData
 from molpot.composition import build_sonata
 from molpot.heads import EdgeEnergyHead
 from molzoo import Allegro
@@ -339,12 +339,12 @@ def _load_nacl_fallback(*, seed: int = 0) -> tuple[list[dict], list[dict], str]:
 
 
 # ---------------------------------------------------------------------------
-# GraphBatch construction
+# TensorDict construction
 # ---------------------------------------------------------------------------
 
 
-def _make_batch(snapshots: list[dict], *, dtype: torch.dtype = torch.float32) -> GraphBatch:
-    """Assemble a periodic :class:`GraphBatch` with full bidirectional edges.
+def _make_batch(snapshots: list[dict], *, dtype: torch.dtype = torch.float32) -> TensorDict:
+    """Assemble a periodic :class:`TensorDict` with full bidirectional edges.
 
     All snapshots are placed in a single batch with per-graph cell vectors
     written under ``("graphs", "cell")``. Edges are *full bidirectional*
@@ -361,7 +361,7 @@ def _make_batch(snapshots: list[dict], *, dtype: torch.dtype = torch.float32) ->
             assertions in unit tests pass float64 here.
 
     Returns:
-        :class:`GraphBatch` with ``atoms``, ``edges``, ``graphs`` sub-dicts.
+        :class:`TensorDict` with ``atoms``, ``edges``, ``graphs`` sub-dicts.
         ``("graphs", "energy")`` carries the per-graph reference energy in
         eV; ``("atoms", "forces")`` carries the per-atom reference forces
         in eV/Å.
@@ -426,21 +426,21 @@ def _make_batch(snapshots: list[dict], *, dtype: torch.dtype = torch.float32) ->
     n_edges_total = int(edge_index.shape[0])
     n_graphs = len(snapshots)
 
-    return GraphBatch(
-        atoms=AtomData(
+    return TensorDict(
+        atoms=TensorDict(
             Z=Z_full,
             pos=pos_full,
             batch=batch_full,
             forces=forces_full,
             batch_size=[n_atoms_total],
         ),
-        edges=EdgeData(
+        edges=TensorDict(
             edge_index=edge_index,
             bond_diff=bond_diff,
             bond_dist=bond_dist,
             batch_size=[n_edges_total],
         ),
-        graphs=GraphData(
+        graphs=TensorDict(
             num_atoms=num_atoms,
             cell=cell_full,
             total_charge=total_charge,
@@ -474,14 +474,14 @@ class _ShortRangeBaseline(nn.Module):
 
     def forward(
         self,
-        batch: GraphBatch,
+        batch: TensorDict,
         *,
         compute_forces: bool = False,
     ) -> dict[str, torch.Tensor]:
         """Run encoder → ``EdgeEnergyHead``; optionally derive forces.
 
         Args:
-            batch: Periodic :class:`GraphBatch` carrying ``atoms.pos``
+            batch: Periodic :class:`TensorDict` carrying ``atoms.pos``
                 and per-graph ``cell``. ``("atoms", "pos")`` is detached
                 and reattached to the autograd graph when
                 ``compute_forces=True``.
@@ -714,8 +714,8 @@ def _compute_long_range_force_mae(
 def _train_one_run(
     *,
     model: nn.Module,
-    train_batch: GraphBatch,
-    val_batch: GraphBatch,
+    train_batch: TensorDict,
+    val_batch: TensorDict,
     n_steps: int,
     lr: float = DEFAULT_LR,
     seed: int = 0,
@@ -723,7 +723,7 @@ def _train_one_run(
 ) -> dict[str, float]:
     """Train ``model`` for ``n_steps`` and return validation MAE columns.
 
-    The training and validation batches are :class:`GraphBatch` objects
+    The training and validation batches are :class:`TensorDict` objects
     pre-built with full bidirectional edges and minimum-image
     ``bond_diff`` / ``bond_dist`` (see :func:`_make_batch`). Because the
     smoke- and fallback-mode datasets are too small to require a sampler,
@@ -737,8 +737,8 @@ def _train_one_run(
         model: Either a :class:`Sonata` or a :class:`_ShortRangeBaseline`.
             Both expose ``forward(batch, compute_forces=True)`` returning
             ``{"energy": (B,), "forces": (N, 3)}``.
-        train_batch: Pre-built :class:`GraphBatch` used at every step.
-        val_batch: Pre-built :class:`GraphBatch` used for the final MAE
+        train_batch: Pre-built :class:`TensorDict` used at every step.
+        val_batch: Pre-built :class:`TensorDict` used for the final MAE
             computation.
         n_steps: Number of optimisation steps.
         lr: Adam learning rate.

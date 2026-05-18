@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from molpot.elec import CoulombPotential
-from molpot.elec.calculators import Calculator
+from molpot.potentials.elec import CoulombPotential
+from molpot.potentials.elec.calculators import Calculator
 
 # Define some example parameters
 DTYPE = torch.float32
@@ -67,9 +67,7 @@ def test_invalid_shape_positions():
 # Tests for invalid shape, dtype and device of cell
 def test_invalid_shape_cell():
     calculator = CalculatorTest()
-    match = (
-        r"`cell` must be a tensor with shape \[3, 3\], got tensor with shape \[2, 2\]"
-    )
+    match = r"`cell` must be a tensor with shape \[3, 3\], got tensor with shape \[2, 2\]"
     with pytest.raises(ValueError, match=match):
         calculator.forward(
             positions=POSITIONS_1,
@@ -82,7 +80,10 @@ def test_invalid_shape_cell():
 
 def test_invalid_dtype_cell():
     calculator = CalculatorTest()
-    match = r"type of `cell` \(torch.float64\) must be same as that of the `positions` class \(torch.float32\)"
+    match = (
+        r"type of `cell` \(torch.float64\) must be same as that of the "
+        r"`positions` class \(torch.float32\)"
+    )
     with pytest.raises(TypeError, match=match):
         calculator.forward(
             positions=POSITIONS_1,
@@ -203,7 +204,10 @@ def test_invalid_shape_neighbor_indices_neighbor_distances():
 
 def test_invalid_device_neighbor_indices():
     calculator = CalculatorTest()
-    match = r"device of `neighbor_indices` \(meta\) must be same as that of the `positions` class \(cpu\)"
+    match = (
+        r"device of `neighbor_indices` \(meta\) must be same as that of the "
+        r"`positions` class \(cpu\)"
+    )
     with pytest.raises(ValueError, match=match):
         calculator.forward(
             positions=POSITIONS_1,
@@ -216,7 +220,10 @@ def test_invalid_device_neighbor_indices():
 
 def test_invalid_device_neighbor_distances():
     calculator = CalculatorTest()
-    match = r"device of `neighbor_distances` \(meta\) must be same as that of the `positions` class \(cpu\)"
+    match = (
+        r"device of `neighbor_distances` \(meta\) must be same as that of the "
+        r"`positions` class \(cpu\)"
+    )
     with pytest.raises(ValueError, match=match):
         calculator.forward(
             positions=POSITIONS_1,
@@ -272,15 +279,7 @@ def test_exclusion_radius():
                 1
                 - (
                     1
-                    - (
-                        (
-                            1
-                            - torch.cos(
-                                torch.pi * (NEIGHBOR_DISTANCES[0] / exclusion_radius)
-                            )
-                        )
-                        * 0.5
-                    )
+                    - ((1 - torch.cos(torch.pi * (NEIGHBOR_DISTANCES[0] / exclusion_radius))) * 0.5)
                     ** exclusion_degree
                 )
             )

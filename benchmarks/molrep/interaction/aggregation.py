@@ -56,9 +56,7 @@ class BMMessageAggregation:
         edge_index = graph_data["edge_index"]
         edge_cutoff = torch.rand(n_edges)
 
-        explanation = torch._dynamo.explain(module)(
-            messages, edge_index, edge_cutoff, n_nodes
-        )
+        explanation = torch._dynamo.explain(module)(messages, edge_index, edge_cutoff, n_nodes)
         print(f"Graph break count: {explanation.graph_break_count}")
         print(f"Break reasons: {explanation.break_reasons}")
         # Uses EquivariantLinear (cuEquivariance): graph breaks are expected

@@ -32,9 +32,9 @@ from __future__ import annotations
 
 import pytest
 import torch
+from tensordict import TensorDict
 
 from molix.config import config
-from molix.data.types import AtomData, EdgeData, GraphBatch, GraphData
 from molpot import Polarization
 from molpot.composition import Sonata, build_sonata
 from molzoo import Allegro
@@ -45,7 +45,7 @@ from molzoo import Allegro
 
 
 @pytest.fixture(scope="module")
-def sonata_and_batch() -> tuple[Sonata, GraphBatch]:
+def sonata_and_batch() -> tuple[Sonata, TensorDict]:
     orig_ftype = config["ftype"]
     config["ftype"] = torch.float64
     try:
@@ -97,15 +97,15 @@ def sonata_and_batch() -> tuple[Sonata, GraphBatch]:
         total_charge = torch.zeros(1, dtype=torch.float64)
         num_atoms = torch.tensor([4], dtype=torch.long)
 
-        batch = GraphBatch(
-            atoms=AtomData(Z=Z, pos=pos, batch=batch_idx, batch_size=[4]),
-            edges=EdgeData(
+        batch = TensorDict(
+            atoms=TensorDict(Z=Z, pos=pos, batch=batch_idx, batch_size=[4]),
+            edges=TensorDict(
                 edge_index=edge_index,
                 bond_diff=bond_diff,
                 bond_dist=bond_dist,
                 batch_size=[edge_index.shape[0]],
             ),
-            graphs=GraphData(
+            graphs=TensorDict(
                 num_atoms=num_atoms,
                 total_charge=total_charge,
                 cell=cell,

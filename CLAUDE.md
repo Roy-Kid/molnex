@@ -65,7 +65,7 @@ this wrong and `KeyError(('edges','edge_index'))` is the first thing you see.
 | Stage | Container | Example access |
 |---|---|---|
 | `DataSource[i]`, pipeline `SampleTask` / `DatasetTask` I/O, `MmapDataset[i]` | **flat `dict`** | `sample["Z"]`, `sample["edge_index"]`, `sample["targets"]["U0"]` |
-| Post-`collate_molecules` `GraphBatch` (what encoders / losses receive) | **nested `TensorDict`** | `batch["atoms", "Z"]`, `batch["edges", "edge_index"]`, `batch["graphs", "energy"]` |
+| Post-`collate_molecules` (what encoders / losses receive) | **nested `TensorDict`** (plain, no subclass) | `batch["atoms", "Z"]`, `batch["edges", "edge_index"]`, `batch["graphs", "energy"]` |
 
 The single conversion point is `molix.data.collate.collate_molecules`
 (invoked by `DataModule._CollateFn`). Stats / diagnostics operating on
@@ -75,16 +75,16 @@ operating on batches uses **nested tuple-keys**.
 #### Post-collate batch schema
 
 ```
-GraphBatch (batch_size=[])
-├── "atoms": AtomData (batch_size=[N])
+TensorDict (batch_size=[])
+├── "atoms": TensorDict (batch_size=[N])
 │   ├── Z: atomic numbers (N,)
 │   ├── pos: positions (N, 3)
 │   └── batch: graph membership (N,)
-├── "edges": EdgeData (batch_size=[E])
+├── "edges": TensorDict (batch_size=[E])
 │   ├── edge_index: source-target pairs (E, 2)   # [:,0]=source, [:,1]=target
 │   ├── bond_diff: edge vectors (E, 3)            # pos[target] - pos[source]
 │   └── bond_dist: edge distances (E,)
-└── "graphs": GraphData (batch_size=[B])  [optional]
+└── "graphs": TensorDict (batch_size=[B])  [optional]
     ├── num_atoms: (B,)
     └── <targets>
 ```
@@ -247,6 +247,21 @@ hooks (`MetricsHook`, `TensorBoardHook`) should write their
 - **Functional composition**: `PotentialComposer` chains pooling → parameter heads → potential terms → aggregation
 - **Hook protocol**: Lifecycle callbacks (`on_train_start`, `on_epoch_end`, etc.) via `Hook` protocol
 - **Step protocol**: `DefaultTrainStep` / `DefaultEvalStep` wrap forward → loss → backward → optimizer
+
+### TensorDict Contract
+
+The post-collate batch is a **plain `tensordict.TensorDict`** — no subclass.
+The `AtomData / EdgeData / GraphData / GraphBatch` subclasses that existed
+before 2026-05-18 have been removed. The `atoms / edges / graphs` namespace
+structure and per-namespace `batch_size` are the only schema contract; they
+are documented in the table above, not enforced by Python types.
+
+**Rules for new code:**
+- Use plain `TensorDict(..., batch_size=[N])`, never subclass it for batch data.
+- Encoders: prefer inheriting `TensorDictModuleBase` for `in_keys`/`out_keys`
+  validation. Plain `nn.Module` is accepted as long as `forward(td: TensorDict)
+  -> TensorDict` is respected.
+- Do not introduce `@tensorclass` dataclass wrappers for batch containers.
 
 ### Adding New Components
 

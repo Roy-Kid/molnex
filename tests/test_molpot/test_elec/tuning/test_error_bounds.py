@@ -1,9 +1,9 @@
 import pytest
 import torch
 
-from molpot.elec.tuning.ewald import EwaldErrorBounds
-from molpot.elec.tuning.p3m import P3MErrorBounds
-from molpot.elec.tuning.pme import PMEErrorBounds
+from molpot.potentials.elec.tuning.ewald import EwaldErrorBounds
+from molpot.potentials.elec.tuning.p3m import P3MErrorBounds
+from molpot.potentials.elec.tuning.pme import PMEErrorBounds
 
 
 @pytest.mark.parametrize(
