@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 class DefaultTrainStep:
     """Default training step with optional AMP support.
 
-    Precision is controlled globally via :func:`molix.config.set_precision`
+    Precision is controlled globally via :meth:`molix.config.MolnexConfig.set_precision`
     which writes ``use_amp`` and ``amp_dtype`` into the global
     :data:`molix.config.config`. When ``use_amp`` is true the forward pass
     runs under :func:`torch.amp.autocast` and backward uses the

@@ -15,26 +15,50 @@ from molix.core.steps.eval import DefaultEvalStep
 from molix.core.steps.train import DefaultTrainStep
 
 
-def batch_to_device(
+def batch_to(
     batch: Any,
-    device: torch.device | str,
+    *,
+    device: torch.device | str | None = None,
+    dtype: torch.dtype | None = None,
 ) -> Any:
-    """Move a batch to the target device.
+    """Move and/or cast a batch in a single pass.
 
-    Handles TensorDict/GraphBatch (via ``.to()``), plain dicts (recursive),
-    and bare tensors. Non-tensor leaves are returned unchanged.
+    One unified op for the two boundaries the trainer cares about:
+
+    - **device** is applied to every leaf (long index tensors must move
+      with their floating siblings).
+    - **dtype** is applied only to floating-point leaves (``edge_index``,
+      ``Z``, ``batch``, ``num_atoms`` stay long).
+
+    Both kwargs are optional; passing neither is a no-op. When *batch* is
+    a TensorDict / GraphBatch the walk is delegated to ``.apply()``, so
+    the whole tree is traversed once even when both axes are requested.
 
     Args:
-        batch: Batch data — TensorDict, dict, Tensor, or other.
-        device: Target device.
+        batch: TensorDict / GraphBatch / nested dict / Tensor / other.
+        device: Target device, or ``None`` to leave the device alone.
+        dtype: Target floating-point dtype, or ``None`` to leave it alone.
 
     Returns:
-        Batch with all tensors on ``device``.
+        Batch with the requested transformations applied. Non-tensor
+        leaves and tensors of unrelated dtype (when ``dtype`` is set)
+        are returned unchanged.
     """
-    if hasattr(batch, "to"):
-        return batch.to(device)
+    if device is None and dtype is None:
+        return batch
+
+    def _move(t: torch.Tensor) -> torch.Tensor:
+        eff_dtype = dtype if (dtype is not None and t.is_floating_point()) else None
+        if device is None and eff_dtype is None:
+            return t
+        return t.to(device=device, dtype=eff_dtype)
+
+    if hasattr(batch, "apply"):
+        return batch.apply(_move)
+    if isinstance(batch, torch.Tensor):
+        return _move(batch)
     if isinstance(batch, dict):
-        return {k: batch_to_device(v, device) for k, v in batch.items()}
+        return {k: batch_to(v, device=device, dtype=dtype) for k, v in batch.items()}
     return batch
 
 
@@ -42,5 +66,5 @@ __all__ = [
     "Step",
     "DefaultTrainStep",
     "DefaultEvalStep",
-    "batch_to_device",
+    "batch_to",
 ]

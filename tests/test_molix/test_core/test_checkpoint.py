@@ -9,7 +9,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from molix.config import set_precision
+from molix.config import config
 from molix.core.checkpoint import (
     Checkpoint,
     TorchSaveBackend,
@@ -23,9 +23,9 @@ from molix.hooks import CheckpointHook
 
 @pytest.fixture(autouse=True)
 def _reset_precision():
-    set_precision("fp32")
+    config.set_precision("fp32")
     yield
-    set_precision("fp32")
+    config.set_precision("fp32")
 
 
 # ---------------------------------------------------------------------------
