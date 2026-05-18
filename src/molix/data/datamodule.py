@@ -5,9 +5,12 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import Protocol, runtime_checkable
 
+import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
 
+from molix.config import config
+from molix.core.steps import batch_to
 from molix.data.collate import DEFAULT_TARGET_SCHEMA, TargetSchema, collate_molecules
 from molix.data.dataset import BaseDataset
 from molix.data.pipeline import Node
@@ -185,6 +188,16 @@ class DataModule:
     def _make_collate_fn(self) -> "_CollateFn":
         return _CollateFn(self.target_schema, self.batch_nodes)
 
+    @property
+    def ftype(self) -> torch.dtype:
+        """The floating-point dtype each collated batch will be cast to.
+
+        Captured from :data:`molix.config.config` at dataloader-construction
+        time so that ``spawn``-launched workers see a stable value even after
+        their module-level re-import of :mod:`molix.config`.
+        """
+        return config["ftype"]
+
     # -- Epoch hook ---------------------------------------------------------
 
     def on_epoch_start(self, epoch: int) -> None:
@@ -208,14 +221,25 @@ class _CollateFn:
     and every platform (``spawn`` is already the default on macOS/Windows
     and is what we default to in :class:`DataModule` to sidestep the
     Python 3.14 multi-threaded-fork DeprecationWarning).
+
+    Captures :data:`molix.config.config["ftype"]` at construction time
+    (in the main process) and routes each emitted batch through
+    :func:`molix.core.steps.batch_to` with ``dtype=self.ftype`` so the
+    floating-point leaves match the model. This is what makes
+    :meth:`molix.config.MolnexConfig.set_precision` a true
+    single-source-of-truth for precision: workers re-import
+    :mod:`molix.config` after spawn and would otherwise reset ``ftype``
+    to its default ``float32``, so the value must be captured by the
+    parent and pickled along with this callable.
     """
 
     def __init__(self, schema: TargetSchema, batch_nodes: Sequence[Node]) -> None:
         self.schema = schema
         self.batch_nodes = batch_nodes
+        self.ftype = config["ftype"]
 
     def __call__(self, samples: list[dict]) -> dict:
         batch = collate_molecules(samples, self.schema)
         for entry in self.batch_nodes:
             batch = entry.apply(batch)
-        return batch
+        return batch_to(batch, dtype=self.ftype)

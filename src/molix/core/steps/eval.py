@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 class DefaultEvalStep:
     """Default evaluation step with optional AMP support.
 
-    Precision is controlled globally via :func:`molix.config.set_precision`.
+    Precision is controlled globally via :meth:`molix.config.MolnexConfig.set_precision`.
     When ``config["use_amp"]`` is true the forward pass runs under
     :func:`torch.amp.autocast` with ``config["amp_dtype"]``. No
     ``GradScaler`` is used during evaluation.

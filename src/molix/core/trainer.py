@@ -13,11 +13,10 @@ import torch.nn as nn
 
 from molix import logger as _logger_mod
 from molix.config import config
-from molix.config import set_precision as _set_precision_global
 from molix.core.checkpoint import Checkpoint, CheckpointBackend, TorchSaveBackend
 from molix.core.hook import Hook
 from molix.core.state import Stage, TrainState, resolve
-from molix.core.steps import DefaultEvalStep, DefaultTrainStep, Step, batch_to_device
+from molix.core.steps import DefaultEvalStep, DefaultTrainStep, Step, batch_to
 from molix.data.datamodule import DataModuleProtocol
 
 logger = _logger_mod.getLogger(__name__)
@@ -142,15 +141,15 @@ class Trainer:
     def set_precision(self, mode: str) -> None:
         """Configure training precision and sync the AMP ``GradScaler``.
 
-        Delegates to :func:`molix.config.set_precision` (which writes
-        ``ftype`` / ``use_amp`` / ``amp_dtype`` into the global
+        Delegates to :meth:`molix.config.MolnexConfig.set_precision` (which
+        writes ``ftype`` / ``use_amp`` / ``amp_dtype`` into the global
         :data:`molix.config.config`), then (re)creates ``self.scaler`` to
         match ``config["use_amp"]`` and updates the checkpoint aggregate so
         the new scaler is saved/loaded.
 
         Must be called **before** ``trainer.train()``. For ``"fp64"`` the
         model must additionally be constructed (or cast) with the new
-        ``ftype``, because layers bake in ``config.ftype`` at ``__init__``.
+        ``ftype``, because layers bake in ``config["ftype"]`` at ``__init__``.
 
         Args:
             mode: One of ``"fp32"``, ``"fp64"``, ``"fp16-mixed"``,
@@ -159,7 +158,7 @@ class Trainer:
         Raises:
             ValueError: If ``mode`` is not a supported preset.
         """
-        _set_precision_global(mode)
+        config.set_precision(mode)
         self.scaler = torch.amp.GradScaler() if config["use_amp"] else None
         self._checkpoint.scaler = self.scaler
 
@@ -323,7 +322,7 @@ class Trainer:
 
             model_device = next(self.model.parameters()).device
             for batch in datamodule.train_dataloader():
-                batch = batch_to_device(batch, model_device)
+                batch = batch_to(batch, device=model_device)
                 self._call_hooks("on_train_batch_start", self, self.state, batch)
                 outputs = self.train_step.on_train_batch(self, self.state, batch)
                 self._call_hooks("on_train_batch_end", self, self.state, batch, outputs)
@@ -558,7 +557,7 @@ class Trainer:
 
         model_device = next(self.model.parameters()).device
         for batch in datamodule.val_dataloader():
-            batch = batch_to_device(batch, model_device)
+            batch = batch_to(batch, device=model_device)
             self._call_hooks("on_eval_batch_start", self, self.state, batch)
             outputs = self.eval_step.on_eval_batch(self, self.state, batch)
             self._call_hooks("on_eval_batch_end", self, self.state, batch, outputs)

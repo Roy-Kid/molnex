@@ -4,7 +4,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from molix.config import set_precision
+from molix.config import config
 from molix.core.state import TrainState
 from molix.core.steps import DefaultEvalStep, DefaultTrainStep
 from molix.core.trainer import Trainer
@@ -13,9 +13,9 @@ from molix.core.trainer import Trainer
 @pytest.fixture(autouse=True)
 def _reset_precision():
     """Ensure each test starts from fp32 since precision is global state."""
-    set_precision("fp32")
+    config.set_precision("fp32")
     yield
-    set_precision("fp32")
+    config.set_precision("fp32")
 
 
 # Simple test model following canonical MolNex contract: forward(batch)
