@@ -297,22 +297,21 @@ class TestUnitConvert:
 
 
 class TestPipeline:
-    def test_three_registration_methods(self):
+    def test_registration_methods(self):
         pipe = Pipeline("test")
 
-        # Method 1: decorator
-        @pipe.task
-        def add_tag(sample):
-            return {**sample, "tag": "test"}
+        # Task subclass
+        pipe.add(NeighborList(cutoff=5.0, max_num_pairs=10), name="nlist")
 
-        # Method 2: Task subclass
-        pipe.add(NeighborList(cutoff=5.0, max_num_pairs=10))
-
-        # Method 3: bare callable
+        # Bare callable
         pipe.add(lambda s: {**s, "extra": 1}, name="extra")
 
+        # Pre-built Node
+        from molix.data.pipeline import Node
+        pipe.node(Node(name="tag", task=lambda s: {**s, "tag": "test"}))
+
         spec = pipe.build()
-        assert len(spec.tasks) == 3
+        assert len(spec.nodes) == 3
         assert spec.pipeline_id  # non-empty hash
 
     def test_isinstance_dispatch(self):
@@ -321,8 +320,8 @@ class TestPipeline:
         pipe.add(NeighborList(cutoff=5.0, max_num_pairs=10))
         spec = pipe.build()
 
-        assert len(spec.prepare_tasks) == 2
-        assert len(spec.batch_tasks) == 0
+        assert len(spec.prepare_nodes) == 2
+        assert len(spec.batch_nodes) == 0
 
-        assert isinstance(spec.prepare_tasks[0].task, DatasetTask)
-        assert isinstance(spec.prepare_tasks[1].task, SampleTask)
+        assert isinstance(spec.prepare_nodes[0].task, DatasetTask)
+        assert isinstance(spec.prepare_nodes[1].task, SampleTask)

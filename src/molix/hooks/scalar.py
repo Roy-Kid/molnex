@@ -36,6 +36,11 @@ class MetricsHook(ScalarHook):
         target_key: Dotted path or tuple to extract targets from batch.
         prefix_train: State namespace for train metrics (default ``"train"``).
         prefix_val: State namespace for val metrics (default ``"eval"``).
+        name_prefix: Optional string prepended to each metric's scalar name.
+            Use when registering two MetricsHook instances for different
+            quantities (e.g. ``name_prefix="E_"`` for energy,
+            ``name_prefix="F_"`` for forces) so their scalar keys don't
+            collide.
     """
 
     def __init__(
@@ -45,6 +50,7 @@ class MetricsHook(ScalarHook):
         target_key: str | tuple = "targets",
         prefix_train: str = "train",
         prefix_val: str = "eval",
+        name_prefix: str = "",
     ):
         import copy
 
@@ -54,10 +60,14 @@ class MetricsHook(ScalarHook):
         self.target_key = target_key if isinstance(target_key, tuple) else (target_key,)
         self.prefix_train = prefix_train
         self.prefix_val = prefix_val
+        self.name_prefix = name_prefix
+
+    def _scalar_name(self, metric: Any) -> str:
+        return self.name_prefix + type(metric).__name__
 
     @property
     def scalar_keys(self) -> tuple[Path, ...]:
-        names = [m.__class__.__name__ for m in self.train_metrics]
+        names = [self._scalar_name(m) for m in self.train_metrics]
         return tuple((prefix, n) for prefix in (self.prefix_train, self.prefix_val) for n in names)
 
     def _extract_value(self, data: Any, keys: tuple) -> Any:
@@ -86,7 +96,7 @@ class MetricsHook(ScalarHook):
         for metric in self.train_metrics:
             metric.reset()
             metric.update(preds, targets)
-            train_ns[type(metric).__name__] = metric.compute()
+            train_ns[self._scalar_name(metric)] = metric.compute()
 
     def on_eval_batch_end(self, trainer, state, batch, outputs):
         preds = self._extract_value(outputs, self.pred_key)
@@ -97,7 +107,7 @@ class MetricsHook(ScalarHook):
     def on_eval_step_complete(self, trainer, state):
         val_ns = state[self.prefix_val]
         for metric in self.val_metrics:
-            val_ns[type(metric).__name__] = metric.compute()
+            val_ns[self._scalar_name(metric)] = metric.compute()
             metric.reset()
 
 

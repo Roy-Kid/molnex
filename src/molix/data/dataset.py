@@ -39,41 +39,7 @@ __all__ = [
     "CachedDataset",
     "MmapDataset",
     "SubsetDataset",
-    "split_indices",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Split helper
-# ---------------------------------------------------------------------------
-
-
-def split_indices(
-    n: int,
-    sizes: Sequence[int],
-    *,
-    seed: int = 42,
-) -> list[list[int]]:
-    """Seeded random N-way split of ``range(n)`` into per-size index lists.
-
-    The returned lists partition a prefix of a shuffled permutation —
-    ``sum(sizes)`` may be less than ``n`` (trailing samples are dropped)
-    but must not exceed it. Callers that require ``sum(sizes) == n``
-    should validate separately.
-    """
-    total = sum(sizes)
-    if total > n:
-        raise ValueError(
-            f"sum(sizes)={total} exceeds n={n}; split cannot cover more samples than the source has"
-        )
-    gen = torch.Generator().manual_seed(seed)
-    perm = torch.randperm(n, generator=gen).tolist()
-    parts: list[list[int]] = []
-    offset = 0
-    for sz in sizes:
-        parts.append(perm[offset : offset + sz])
-        offset += sz
-    return parts
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +56,34 @@ class BaseDataset(Dataset[Any], ABC):
 
     @abstractmethod
     def __getitem__(self, idx: int) -> dict: ...  # type: ignore[override]
+
+    def _compute_split_indices(
+        self,
+        sizes: Sequence[int],
+        *,
+        seed: int = 42,
+    ) -> list[list[int]]:
+        """Seeded random N-way split of ``range(len(self))`` into per-size index lists.
+
+        The returned lists partition a prefix of a shuffled permutation —
+        ``sum(sizes)`` may be less than ``n`` (trailing samples are dropped)
+        but must not exceed it.
+        """
+        n = len(self)
+        total = sum(sizes)
+        if total > n:
+            raise ValueError(
+                f"sum(sizes)={total} exceeds n={n}; "
+                "split cannot cover more samples than the source has"
+            )
+        gen = torch.Generator().manual_seed(seed)
+        perm = torch.randperm(n, generator=gen).tolist()
+        parts: list[list[int]] = []
+        offset = 0
+        for sz in sizes:
+            parts.append(perm[offset : offset + sz])
+            offset += sz
+        return parts
 
     def split(
         self,
@@ -110,7 +104,9 @@ class BaseDataset(Dataset[Any], ABC):
         assert sizes is not None
         if sum(sizes) != n:
             raise ValueError(f"sizes must sum to len(self)={n}, got sum={sum(sizes)}")
-        return tuple(SubsetDataset(self, idx) for idx in split_indices(n, sizes, seed=seed))
+        return tuple(
+            SubsetDataset(self, idx) for idx in self._compute_split_indices(sizes, seed=seed)
+        )
 
 
 # ---------------------------------------------------------------------------

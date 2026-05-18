@@ -1,4 +1,4 @@
-"""Tests for QM9Source + integration with :meth:`PipelineSpec.build_cache`.
+"""Tests for QM9Source + integration with :meth:`PipelineSpec.cache`."""
 
 Uses a synthetic QM9 tarball placed in tmp_path to avoid network downloads.
 """
@@ -162,15 +162,13 @@ class TestQM9Source:
 
 
 class TestQM9SourceWithCache:
-    """End-to-end: QM9Source → PipelineSpec.build_cache → MmapDataset."""
+    """End-to-end: QM9Source -> PipelineSpec.cache -> MmapDataset."""
 
     def test_cache_roundtrip(self, fake_qm9_root, tmp_path):
         src = QM9Source(fake_qm9_root, download=False, targets=["U0"])
         spec = Pipeline("qm9-test").build()  # no-op pipeline
-        sink = tmp_path / "prepared.pt"
-
-        spec.build_cache(src, sink)
-        ds = MmapDataset(sink)
+        dag = spec.cache(src, base_dir=tmp_path)
+        ds = dag.dataset(mmap=True)
 
         assert len(ds) == 3
         # U0 targets survive the round-trip

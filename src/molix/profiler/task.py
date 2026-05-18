@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from molix.data.pipeline import TaskEntry
+from molix.data.pipeline import Node
 from molix.data.task import DatasetTask
 from molix.profiler._utils import Timer, TimingStat, _fmt_table
 
@@ -133,7 +133,7 @@ class TaskProfiler:
 
         task_name = type(self.task).__name__
         task_id = getattr(self.task, "task_id", task_name)
-        entry = TaskEntry(name=task_name, task=self.task)
+        entry = Node(name=task_name, task=self.task)
 
         total = n_warmup + n_samples
         times_ms: list[float] = []

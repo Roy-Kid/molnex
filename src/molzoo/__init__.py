@@ -5,6 +5,7 @@ This package provides encoder architectures and potential models.
 
 from molzoo.allegro import Allegro, AllegroSpec
 from molzoo.mace import MACE, MACESpec
+from molzoo.pinet import PiNet, PiNetSpec
 from molzoo.sonata import Sonata, SonataSpec
 
 __all__ = [
@@ -12,6 +13,8 @@ __all__ = [
     "AllegroSpec",
     "MACE",
     "MACESpec",
+    "PiNet",
+    "PiNetSpec",
     "Sonata",
     "SonataSpec",
 ]

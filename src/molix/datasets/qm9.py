@@ -143,37 +143,52 @@ def _load_raw(root: Path, total: int | None) -> list[dict]:
     _ensure_downloaded(root)
     tarball = root / "qm9.tar.bz2"
     exclude_file = root / "qm9_exclude.txt"
+    index_file = root / "qm9.index.txt"
 
     excluded = _load_exclusion_list(exclude_file)
 
-    members: list[str] = []
-    tar_info_cache: dict[str, tarfile.TarInfo] = {}
-    with tarfile.open(tarball, "r:bz2") as tar:
-        for member in tqdm(tar, desc="Indexing QM9", file=sys.stdout):
-            if not member.name.endswith(".xyz"):
-                continue
-            try:
-                mol_idx = int(member.name[-10:-4])
-            except ValueError:
-                continue
-            if mol_idx in excluded:
-                continue
-            members.append(member.name)
-            tar_info_cache[member.name] = member
-    members.sort()
+    # On first run, walk the 130k tar headers once to build the member list and
+    # persist it next to the tarball. Subsequent runs (including smokes) skip
+    # the ~40s bz2 header walk entirely.
+    if index_file.exists():
+        members = [line for line in index_file.read_text().splitlines() if line]
+    else:
+        members = []
+        with tarfile.open(tarball, "r:bz2") as tar:
+            for member in tqdm(tar, desc="Indexing QM9", file=sys.stdout):
+                if not member.name.endswith(".xyz"):
+                    continue
+                try:
+                    mol_idx = int(member.name[-10:-4])
+                except ValueError:
+                    continue
+                if mol_idx in excluded:
+                    continue
+                members.append(member.name)
+        members.sort()
+        index_file.write_text("\n".join(members) + "\n")
 
     if total is not None and total < len(members):
         random.seed(42)
         members = sorted(random.sample(members, total))
 
-    samples: list[dict] = []
+    wanted = set(members)
+    samples_by_name: dict[str, dict] = {}
     with tarfile.open(tarball, "r:bz2") as tar:
-        for name in tqdm(members, desc="Loading QM9", file=sys.stdout):
-            f = tar.extractfile(tar_info_cache[name])
+        pbar = tqdm(total=len(wanted), desc="Loading QM9", file=sys.stdout)
+        for tarinfo in tar:
+            name = tarinfo.name
+            if name not in wanted:
+                continue
+            f = tar.extractfile(tarinfo)
             assert f is not None
-            samples.append(_parse_xyz(f.read().decode("utf-8")))
+            samples_by_name[name] = _parse_xyz(f.read().decode("utf-8"))
+            pbar.update(1)
+            if len(samples_by_name) == len(wanted):
+                break  # early exit once every wanted member is loaded
+        pbar.close()
 
-    return samples
+    return [samples_by_name[n] for n in members]
 
 
 # ---------------------------------------------------------------------------
