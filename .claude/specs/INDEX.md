@@ -9,3 +9,4 @@ once ratified, they are the authoritative description of a feature.
 | [sonata-04-docs](sonata-04-docs.md) | Sonata boundary documentation + design doc (chain 4/4) | approved | `mol:impl` | 2026-05-10 |
 | [sonata-05-data](sonata-05-data.md) | Real bulk-water + charged-dimer Source classes for HPC validation (chain 5/2·1) | approved | `mol:impl` | 2026-05-10 |
 | [sonata-05-hpc](sonata-05-hpc.md) | First-class DDP wrap shim for `molix.core.Trainer` — single-node multi-GPU (chain 5/2·2) | approved | `mol:impl` | 2026-05-10 |
+| [torch-pme-migration](torch-pme-migration.md) | 将 torch-pme 移植到 `molpot.elec`，含全部测试（不含 metatensor） | approved | `mol:impl` | 2026-05-17 |
