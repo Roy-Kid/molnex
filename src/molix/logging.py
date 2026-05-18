@@ -192,10 +192,13 @@ def basicConfig(  # noqa: N802 — stdlib naming
     logger.add_handler(stream_handler)
 
     if filename is not None:
+        # mollog.FileHandler currently only accepts (path, level); `mode` /
+        # `encoding` parameters from the stdlib FileHandler API are not
+        # forwarded here. If a future mollog release adds them, the kwargs
+        # should be re-introduced.
+        del filemode, encoding
         file_handler = FileHandler(
             Path(filename),
-            mode=filemode,
-            encoding=encoding,
             level=file_lvl,
         )
         file_handler.set_formatter(resolved_file_fmt)
@@ -583,9 +586,7 @@ def configure_run(
     # 2. train.log — full structured audit trail.
     train_handler = FileHandler(
         run_dir / "train.log",
-        mode="w",
         level=file_lvl,
-        encoding="utf-8",
     )
     train_handler.set_formatter(TextFormatter())
     root.add_handler(train_handler)
@@ -593,9 +594,7 @@ def configure_run(
     # 3. metrics.csv — structured training-table sink.
     csv_handler = FileHandler(
         run_dir / "metrics.csv",
-        mode="w",
         level=Level.INFO,
-        encoding="utf-8",
     )
     csv_handler.set_formatter(CSVMetricsFormatter())
     csv_handler.add_filter(ChannelFilter(METRICS_LOGGER_NAME))
@@ -606,9 +605,7 @@ def configure_run(
     # 4. events.log — inline-announce timeline.
     events_handler = FileHandler(
         run_dir / "events.log",
-        mode="w",
         level=Level.INFO,
-        encoding="utf-8",
     )
     events_handler.set_formatter(EventFormatter())
     events_handler.add_filter(ChannelFilter(EVENTS_LOGGER_NAME))
@@ -617,9 +614,7 @@ def configure_run(
     # 5. warnings.log — everything WARNING+, structured.
     warn_handler = FileHandler(
         run_dir / "warnings.log",
-        mode="w",
         level=Level.WARNING,
-        encoding="utf-8",
     )
     warn_handler.set_formatter(TextFormatter())
     root.add_handler(warn_handler)

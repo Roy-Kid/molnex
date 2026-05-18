@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import torch
-import torch.nn as nn
 import math
 
+import torch
+import torch.nn as nn
 from pydantic import BaseModel, Field
 
 from molix import config
@@ -66,8 +66,6 @@ class CosineCutoff(nn.Module):
         Returns:
             Cutoff values. Values range from 1.0 (at r=0) to 0.0 (at r>=r_cut).
         """
-        r = r.float()
-
         # Create mask for distances within cutoff
         mask = r < self.r_cut
 
@@ -148,7 +146,6 @@ class PolynomialCutoff(nn.Module):
         Returns:
             Cutoff values. Values range from 1.0 (at r=0) to 0.0 (at r>=r_cut).
         """
-        r = r.float()
         x = r / self.r_cut
         mask = x < 1.0
 

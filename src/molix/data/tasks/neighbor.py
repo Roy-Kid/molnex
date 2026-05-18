@@ -96,6 +96,6 @@ class NeighborList(SampleTask):
         return {
             **data,
             "edge_index": edge_index,
-            "bond_diff": bond_diff.float(),
-            "bond_dist": distances.float(),
+            "bond_diff": bond_diff,
+            "bond_dist": distances,
         }

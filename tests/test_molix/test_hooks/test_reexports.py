@@ -9,7 +9,6 @@ Acceptance traces:
 
 from __future__ import annotations
 
-import importlib
 import pytest
 
 
@@ -51,8 +50,8 @@ def test_per_module_imports() -> None:
 
 def test_journal_hook_identity_preserves_behaviour() -> None:
     """JournalHook is the (renamed) ``Journal`` class; behaviour preserved."""
-    from molix.hooks import JournalHook
     from molix.core.hook import BaseHook
+    from molix.hooks import JournalHook
 
     assert issubclass(JournalHook, BaseHook)
     # Lifecycle callbacks present.

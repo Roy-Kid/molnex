@@ -143,7 +143,6 @@ class BesselRBF(nn.Module):
         Returns:
             RBF features. Output shape: (..., num_radial)
         """
-        r = r.float()
         phi = self._raw_basis(r)
         if self.normalize:
             phi = (phi - self.mu) / self.sigma
@@ -221,7 +220,9 @@ class GaussianBasis(nn.Module):
         else:
             centers = torch.tensor(list(center), dtype=config.ftype)
         if centers.numel() != int(n_basis):
-            raise ValueError(f"center must contain n_basis={n_basis} values, got {centers.numel()}.")
+            raise ValueError(
+                f"center must contain n_basis={n_basis} values, got {centers.numel()}."
+            )
 
         if isinstance(gamma, (int, float)):
             gammas = torch.full_like(centers, float(gamma))

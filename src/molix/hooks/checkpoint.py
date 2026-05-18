@@ -18,14 +18,27 @@ class CheckpointHook(BaseHook):
     (model, optimizer, lr_scheduler, AMP scaler, RNG states, counters,
     best-metric tracking).
 
+    Trigger model — all step-based, one event per trigger, no implicit
+    epoch-end firing:
+
+    - ``save_every_n_steps`` (default 0 = off) fires on
+      :meth:`on_train_batch_end` and writes ``step_<N>.pt``.
+    - ``save_last`` fires on :meth:`on_eval_step_complete`, writing
+      ``last.pt`` so the freshest evaluated state is always recoverable.
+      The eval cadence is set by ``trainer.eval_every_n_steps``.
+    - ``save_best`` fires on :meth:`on_eval_step_complete`, writing
+      ``best.pt`` when the tracked metric improves.
+    - A final ``last.pt`` is always written on :meth:`on_train_end`.
+
     Args:
         checkpoint_dir: Directory to save checkpoints into.
-        save_every_n_epochs: Save an ``epoch_{N}.pt`` snapshot every N epochs.
-        save_last: Write ``last.pt`` at end of training and on every
-            epoch-end save (so a kill -9'd run still has a resumable
-            snapshot).
-        save_best: Track a scalar metric in :class:`TrainState` and write
-            ``best.pt`` whenever it improves.
+        save_every_n_steps: Write ``step_<N>.pt`` every N training steps.
+            ``0`` disables periodic snapshots. Use a multiple of
+            ``eval_every_n_steps`` so each snapshot lines up with an eval.
+        save_last: Write ``last.pt`` at every eval completion and at the
+            end of training (default ``True``). Cadence = eval cadence.
+        save_best: When ``True``, watch ``best_metric_name`` at every eval
+            completion and write ``best.pt`` on improvement.
         best_metric_name: Path into ``state`` to track for ``save_best``.
             Default ``("eval", "loss")``.
         best_metric_mode: ``"min"`` (smaller = better) or ``"max"``.
@@ -39,7 +52,7 @@ class CheckpointHook(BaseHook):
     def __init__(
         self,
         checkpoint_dir: str = "./checkpoints",
-        save_every_n_epochs: int = 1,
+        save_every_n_steps: int = 0,
         save_last: bool = True,
         save_best: bool = False,
         best_metric_name: Path = ("eval", "loss"),
@@ -52,12 +65,14 @@ class CheckpointHook(BaseHook):
 
         if best_metric_mode not in ("min", "max"):
             raise ValueError(f"best_metric_mode must be 'min' or 'max', got {best_metric_mode!r}")
+        if save_every_n_steps < 0:
+            raise ValueError(f"save_every_n_steps must be >= 0, got {save_every_n_steps}")
 
         self.os = os
         self.torch = torch
 
         self.checkpoint_dir = checkpoint_dir
-        self.save_every_n_epochs = save_every_n_epochs
+        self.save_every_n_steps = save_every_n_steps
         self.save_last = save_last
         self.save_best = save_best
         self.best_metric_name = best_metric_name
@@ -74,17 +89,24 @@ class CheckpointHook(BaseHook):
         if ckpt is not None:
             ckpt.best_metric_name = self.best_metric_name
 
-    def on_epoch_end(self, trainer, state):
-        """Save periodic / best / last checkpoints at epoch end."""
-        if self.save_every_n_epochs > 0 and (state.epoch + 1) % self.save_every_n_epochs == 0:
-            self._save_checkpoint(trainer, state, f"epoch_{state.epoch}.pt")
+    def on_train_batch_end(self, trainer, state, batch, outputs):
+        """Write step-indexed periodic snapshot."""
+        if self.save_every_n_steps <= 0:
+            return
+        step = int(state.get("global_step", 0))
+        if step <= 0 or step % self.save_every_n_steps != 0:
+            return
+        self._save_checkpoint(trainer, state, f"step_{step}.pt")
+
+    def on_eval_step_complete(self, trainer, state):
+        """Refresh ``last.pt`` / ``best.pt`` against the just-finished eval."""
         if self.save_best:
             self._maybe_save_best(trainer, state)
         if self.save_last:
             self._save_checkpoint(trainer, state, "last.pt")
 
     def on_train_end(self, trainer, state):
-        """Save final ``last.pt`` unless ``on_epoch_end`` just wrote it."""
+        """Always write a final ``last.pt`` so the run is resumable."""
         if self.save_last:
             self._save_checkpoint(trainer, state, "last.pt")
 
@@ -128,19 +150,23 @@ class CheckpointHook(BaseHook):
         return sd
 
     def _save_checkpoint(self, trainer, state, filename):
-        """Save checkpoint to disk; dedupe redundant console announces."""
+        """Save checkpoint to disk; dedupe redundant writes + announces.
+
+        Two triggers can fire at the same step (e.g. ``on_eval_step_complete``
+        and ``on_train_end`` at end-of-training). The marker check skips
+        both the redundant ``torch.save`` and the announce.
+        """
         step = int(state.get("global_step", 0))
+        marker = (filename, step)
+        if self._last_announced == marker:
+            return
+        self._last_announced = marker
 
         filepath = self.os.path.join(self.checkpoint_dir, filename)
         checkpoint = self._build_state_dict(trainer, state)
         self.torch.save(checkpoint, filepath)
 
         logger.info(f"Saved checkpoint to {filepath}")
-
-        marker = (filename, step)
-        if self._last_announced == marker:
-            return
-        self._last_announced = marker
         message = f"ckpt: {filename} @ step={step}"
         evt = _logging_mod.events_logger()
         width = _logging_mod.get_table_width()

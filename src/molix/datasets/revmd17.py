@@ -24,16 +24,17 @@ Usage::
 
 from __future__ import annotations
 
-import ssl
 from pathlib import Path
 
 import numpy as np
 import torch
+from molhub.io import extract_member_locked, fetch_locked
 
 from molix.data.collate import TargetSchema
 from molix.data.source import Sample
 
-ssl._create_default_https_context = ssl._create_unverified_context  # type: ignore[assignment]
+_TARBALL_NAME = "rmd17.tar.bz2"
+_FIGSHARE_ARTICLE = "https://figshare.com/articles/dataset/Revised_MD17_dataset_rMD17_/12672038"
 
 
 # Canonical 10 molecules of revMD17 and their filenames on the mirror.
@@ -71,10 +72,25 @@ class RevMD17Source:
         atom_level=frozenset({"forces"}),
     )
 
+    @classmethod
+    def _materialise(cls, root: Path, filename: str) -> None:
+        """Fetch the figshare tarball + extract ``filename``.
+
+        Delegates the WAF-passing HTTP fetch and the flock-guarded extract
+        to :mod:`molhub.io`. Tarball cached at ``root / rmd17.tar.bz2`` for
+        reuse across molecules; both fetch + extract are concurrent-safe
+        so simultaneous slurm jobs serialise instead of clobbering files.
+        """
+        tarball = root / _TARBALL_NAME
+        fetch_locked(cls.BASE_URL, tarball, referer=_FIGSHARE_ARTICLE)
+        extract_member_locked(tarball, f"rmd17/npz_data/{filename}", root / filename)
+
     def __init__(
         self,
         root: str | Path,
         molecule: str = "aspirin",
+        *,
+        total: int | None = None,
         download: bool = True,
     ) -> None:
         if molecule not in _MOLECULES:
@@ -88,12 +104,7 @@ class RevMD17Source:
         self.root.mkdir(parents=True, exist_ok=True)
 
         if download and not self.filepath.exists():
-            raise FileNotFoundError(
-                f"revMD17 file not found at {self.filepath}. "
-                f"Download the archive from {self.BASE_URL} and extract "
-                f"{self.filename} into {self.root}. (The Figshare archive "
-                "bundles all 10 molecules in one tarball.)"
-            )
+            self._materialise(self.root, self.filename)
         if not self.filepath.exists():
             raise FileNotFoundError(f"revMD17 file missing: {self.filepath}")
 
@@ -105,11 +116,20 @@ class RevMD17Source:
         self._R = torch.from_numpy(data["coords"]).float()
         self._E = torch.from_numpy(data["energies"].reshape(-1)).float()
         self._F = torch.from_numpy(data["forces"]).float()
+        # Subset for smokes / quick tests (deterministic first-N frames).
+        if total is not None and total < self._R.shape[0]:
+            self._R = self._R[:total]
+            self._E = self._E[:total]
+            self._F = self._F[:total]
+        self.total = total
 
     @property
     def source_id(self) -> str:
         size = self.filepath.stat().st_size
-        return f"revmd17:{self.molecule}:size={size}:n={len(self)}"
+        sid = f"revmd17:{self.molecule}:size={size}:n={len(self)}"
+        if self.total is not None:
+            sid += f":total={self.total}"
+        return sid
 
     def __len__(self) -> int:
         return int(self._R.shape[0])

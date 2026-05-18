@@ -8,9 +8,11 @@ classmethods on the source itself (e.g. :meth:`QM9Source.download`).
 from molix.datasets.qm9 import QM9Source
 from molix.datasets.revmd17 import RevMD17Source
 from molix.datasets.threebpa import ThreeBPASource
+from molix.datasets.water_les import WaterLESSource
 
 __all__ = [
     "QM9Source",
     "RevMD17Source",
     "ThreeBPASource",
+    "WaterLESSource",
 ]

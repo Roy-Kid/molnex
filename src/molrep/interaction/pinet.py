@@ -310,7 +310,10 @@ class GCBlock(nn.Module):
 
         if self.rank >= 3:
             p3, i3, dotted_p3 = self.equivar_p3_layer(
-                edge_index, tensors["p3"], i1_chunks[1], tensors["d3"],
+                edge_index,
+                tensors["p3"],
+                i1_chunks[1],
+                tensors["d3"],
             )
             px_list.append(dotted_p3)
             new_tensors["i3"] = i3
@@ -318,7 +321,10 @@ class GCBlock(nn.Module):
 
         if self.rank >= 5:
             p5, i5, dotted_p5 = self.equivar_p5_layer(
-                edge_index, tensors["p5"], i1_chunks[2], tensors["d5"],
+                edge_index,
+                tensors["p5"],
+                i1_chunks[2],
+                tensors["d5"],
             )
             px_list.append(dotted_p5)
             new_tensors["i5"] = i5

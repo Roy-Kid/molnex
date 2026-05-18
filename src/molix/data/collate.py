@@ -98,7 +98,7 @@ def collate_molecules(
             raise KeyError("Each sample must contain 'Z' and 'pos'")
 
         z = sample["Z"].long()
-        pos = sample["pos"].float()
+        pos = sample["pos"]
         n_atoms = int(z.shape[0])
 
         z_all.append(z)
@@ -111,16 +111,16 @@ def collate_molecules(
             edge_all.append(edge_index + atom_offset)
 
             if "bond_diff" in sample and sample["bond_diff"] is not None:
-                diff_all.append(sample["bond_diff"].float())
+                diff_all.append(sample["bond_diff"])
             if "bond_dist" in sample and sample["bond_dist"] is not None:
-                dist_all.append(sample["bond_dist"].float())
+                dist_all.append(sample["bond_dist"])
 
         for name, value in sample.get("targets", {}).items():
             value = value if isinstance(value, torch.Tensor) else torch.tensor(value)
             if name in target_schema.atom_level:
-                atom_targets.setdefault(name, []).append(value.float())
+                atom_targets.setdefault(name, []).append(value)
             else:
-                graph_targets.setdefault(name, []).append(value.reshape(-1).float())
+                graph_targets.setdefault(name, []).append(value.reshape(-1))
 
         atom_offset += n_atoms
 

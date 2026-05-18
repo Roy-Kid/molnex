@@ -23,7 +23,6 @@ from molpot.heads.element import (
     TYPICAL_CHARGE_DICT,
 )
 
-
 # ---------------------------------------------------------------------------
 # Spot-check reference dicts (CRC Handbook + IUPAC formal charges).
 #
@@ -34,20 +33,20 @@ from molpot.heads.element import (
 # ---------------------------------------------------------------------------
 
 CRC_ALPHA_REFERENCE: dict[int, float] = {
-    1: 4.50,    # H
-    6: 11.30,   # C
-    7: 7.40,    # N
-    8: 5.30,    # O
+    1: 4.50,  # H
+    6: 11.30,  # C
+    7: 7.40,  # N
+    8: 5.30,  # O
     16: 19.40,  # S
     17: 14.60,  # Cl
     79: 36.00,  # Au
 }
 
 IUPAC_FORMAL_CHARGE_REFERENCE: dict[int, float] = {
-    1: +1.0,   # H
-    6: +4.0,   # C
-    7: -3.0,   # N
-    8: -2.0,   # O
+    1: +1.0,  # H
+    6: +4.0,  # C
+    7: -3.0,  # N
+    8: -2.0,  # O
     11: +1.0,  # Na
     17: -1.0,  # Cl
     79: +1.0,  # Au
@@ -82,9 +81,7 @@ class TestElementChargeTable:
         table = ElementChargeTable(scaling_factor=0.5)
         Z = torch.tensor([1, 6, 7, 8, 17])
         out = table(Z)
-        expected = torch.tensor(
-            [TYPICAL_CHARGE_DICT[z.item()] * 0.5 for z in Z], dtype=out.dtype
-        )
+        expected = torch.tensor([TYPICAL_CHARGE_DICT[z.item()] * 0.5 for z in Z], dtype=out.dtype)
         torch.testing.assert_close(out, expected, atol=0.0, rtol=0.0)
 
     def test_zero_scaling_disables_baseline(self) -> None:
@@ -112,9 +109,7 @@ class TestElementAlphaTable:
 
     def test_spot_check_against_crc_reference(self) -> None:
         for z, ref in CRC_ALPHA_REFERENCE.items():
-            assert ALPHA_DICT_BOHR3[z] == ref, (
-                f"Z={z}: source {ALPHA_DICT_BOHR3[z]}, CRC {ref}"
-            )
+            assert ALPHA_DICT_BOHR3[z] == ref, f"Z={z}: source {ALPHA_DICT_BOHR3[z]}, CRC {ref}"
 
     def test_forward_applies_normalization(self) -> None:
         table = ElementAlphaTable()

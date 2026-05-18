@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 import torch
 
-from molpot import PiNetDipole, PiNetPolarizability, PiNetPotential
 from molrep.utils.equivariance import random_rotation_matrix, rotate_vectors
 from molzoo import PiNet
+from molzoo.pinet import PiNetDipole, PiNetPolarizability, PiNetPotential
 from tests.symmetry_helpers import make_graph_batch, rotate_graph, translate_graph
 
 

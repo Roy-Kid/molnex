@@ -363,9 +363,9 @@ def test_spec_round_trip(encoder, batch):
         out2 = sonata2(batch)
 
     for key in out1:
-        assert torch.allclose(
-            out1[key], out2[key], atol=1e-6, rtol=1e-6
-        ), f"output['{key}'] mismatch after from_spec round-trip"
+        assert torch.allclose(out1[key], out2[key], atol=1e-6, rtol=1e-6), (
+            f"output['{key}'] mismatch after from_spec round-trip"
+        )
 
 
 # ---------------------------------------------------------------------------

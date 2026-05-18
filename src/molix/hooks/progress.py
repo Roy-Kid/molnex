@@ -137,6 +137,8 @@ class Log(BaseHook):
         every_n_steps: Print a row every N training batches.
         keys: State paths to print. ``step`` and ``epoch`` are prepended.
         fmt: Format spec for each scalar column (default ``"{:>12.4g}"``).
+        start_step: Suppress rows before this step. Lets the early-training
+            loss explosion stay out of plots / logs.
     """
 
     def __init__(
@@ -147,16 +149,20 @@ class Log(BaseHook):
         fmt: str = "{:>12.4g}",
         header_every_n_rows: int = 50,
         epoch_separator: bool = True,
+        start_step: int = 0,
     ):
         if every_n_steps <= 0:
             raise ValueError("every_n_steps must be positive")
         if header_every_n_rows <= 0:
             raise ValueError("header_every_n_rows must be positive")
+        if start_step < 0:
+            raise ValueError("start_step must be non-negative")
         self.every_n_steps = every_n_steps
         self.keys = _collect_keys(keys)
         self.fmt = fmt
         self.header_every_n_rows = header_every_n_rows
         self.epoch_separator = epoch_separator
+        self.start_step = start_step
         self._rows_since_header = 0
         self._last_epoch: int | None = None
         self._metrics = _logging_mod.metrics_logger()
@@ -252,6 +258,8 @@ class Log(BaseHook):
 
     def on_train_batch_end(self, trainer, state, batch, outputs):
         step = int(state.get("global_step", 0)) + 1
+        if step < self.start_step:
+            return
         if step % self.every_n_steps != 0:
             return
 

@@ -6,12 +6,12 @@ import pytest
 import torch
 
 from molix.core.hook import ScalarHook
+from molix.core.state import TrainState
 from molix.hooks import (
     GPUMemoryHook,
     Log,
     StepSpeedHook,
 )
-from molix.core.state import TrainState
 
 
 def test_log_prints_header_on_train_start(capsys):

@@ -70,8 +70,11 @@ class Trainer:
             hooks: List of hooks or (hook, priority) tuples. Hooks execute in
                    registration order by default. Use tuples to override priority
                    (lower priority = earlier execution, default = 100).
-            eval_every_n_steps: Run evaluation every N training steps (in addition
-                   to epoch-end eval). If None (default), only epoch-end eval runs.
+            eval_every_n_steps: Run evaluation every N training steps. When set,
+                   this is the exclusive eval cadence — epoch-end eval is
+                   suppressed so short epochs (e.g. revmd17's ~30-step epoch)
+                   do not silently override the configured schedule. If None
+                   (default), only epoch-end eval runs.
                    Must be > 0 if provided.
             resume_from_checkpoint: Path to a checkpoint file to resume from,
                    or ``"auto"`` to detect torchrun elastic snapshots.
@@ -348,10 +351,13 @@ class Trainer:
                     step_limit_reached = True
                     break
 
-            # Epoch-end validation. Skip if step-based eval just ran on the
-            # final batch (steps_since_last_eval == 0) so we don't do the
-            # val pass twice when eval_every_n_steps lines up with epoch end.
-            if self.state.steps_since_last_eval != 0:
+            # Epoch-end validation. When eval_every_n_steps is set, that
+            # schedule is *exclusive* — epoch-end eval is suppressed so a
+            # short epoch (e.g. revmd17 aspirin's 30-step epoch under
+            # batch_size=32) does not silently override the configured
+            # cadence. With eval_every_n_steps=None (default), epoch-end
+            # eval is the only schedule and always runs.
+            if self.eval_every_n_steps is None and self.state.steps_since_last_eval != 0:
                 self._run_eval_phase(datamodule)
                 self.state.steps_since_last_eval = 0
 

@@ -170,8 +170,7 @@ def make_kernels(
         + np.einsum("bc,ija->ijabc", eye, rhat)
     )
     f_Qu = (
-        s3[..., None, None, None] * rrr
-        - (s2 * rinv)[..., None, None, None] * term_delta_r
+        s3[..., None, None, None] * rrr - (s2 * rinv)[..., None, None, None] * term_delta_r
     ) * norm_const
 
     rrrr = np.einsum("ija,ijb,ijc,ijd->ijabcd", rhat, rhat, rhat, rhat)
@@ -527,9 +526,7 @@ def _selftest() -> None:
     # 4. Self-correction parity: single atom, remove_self_interaction=False
     r1 = np.array([[0.0, 0.0, 0.0]])
     q1 = np.array([1.0])
-    out4 = brute_realspace(
-        r1, q1, sigma=1.0, prefactor=prefactor, remove_self_interaction=False
-    )
+    out4 = brute_realspace(r1, q1, sigma=1.0, prefactor=prefactor, remove_self_interaction=False)
     # Single isolated charge: only self-energy contributes.
     sc = self_corrections(1.0, prefactor)
     expected_self = sc["energy_q"]
@@ -539,9 +536,7 @@ def _selftest() -> None:
     )
 
     # 5. remove_self_interaction=True yields zero for a single atom
-    out5 = brute_realspace(
-        r1, q1, sigma=1.0, prefactor=prefactor, remove_self_interaction=True
-    )
+    out5 = brute_realspace(r1, q1, sigma=1.0, prefactor=prefactor, remove_self_interaction=True)
     assert abs(out5["pot"]) < 1e-12, f"single-atom RSI=True should be zero, got {out5['pot']}"
 
     print("All oracle self-tests passed.")

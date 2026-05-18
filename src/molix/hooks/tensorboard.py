@@ -25,6 +25,9 @@ class TensorBoardHook(BaseHook):
         log_histograms: Log weight/gradient histograms each epoch.
         hparams: Hyperparameter dict (required when ``log_hparams=True``).
         histogram_freq: Log histograms every N epochs (default: 1).
+        start_step: Suppress train/performance/gpu writes before this step.
+            Eval scalars are still written (one eval phase point per
+            evaluation is usually wanted from the beginning).
     """
 
     TRAIN_NAMESPACES: tuple[str, ...] = ("train", "performance", "gpu")
@@ -39,9 +42,12 @@ class TensorBoardHook(BaseHook):
         log_histograms: bool = False,
         hparams: dict | None = None,
         histogram_freq: int = 1,
+        start_step: int = 0,
     ):
         if every_n_steps <= 0:
             raise ValueError("every_n_steps must be positive")
+        if start_step < 0:
+            raise ValueError("start_step must be non-negative")
 
         from torch.utils.tensorboard import SummaryWriter
 
@@ -52,6 +58,7 @@ class TensorBoardHook(BaseHook):
         self.log_histograms = log_histograms
         self.hparams = hparams or {}
         self.histogram_freq = histogram_freq
+        self.start_step = start_step
 
         self.writer = None
         self._graph_logged = False
@@ -64,6 +71,8 @@ class TensorBoardHook(BaseHook):
 
     def on_train_batch_end(self, trainer, state, batch, outputs):
         """Log every ``train/*``, ``performance/*``, ``gpu/*`` scalar."""
+        if state.global_step < self.start_step:
+            return
         if state.global_step % self.every_n_steps != 0:
             return
         self._log_namespaces(state, self.TRAIN_NAMESPACES)

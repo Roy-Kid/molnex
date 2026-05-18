@@ -16,9 +16,9 @@ from molix.core.checkpoint import (
     capture_rng_states,
     restore_rng_states,
 )
-from molix.hooks import CheckpointHook
 from molix.core.state import TrainState
 from molix.core.trainer import Trainer
+from molix.hooks import CheckpointHook
 
 
 @pytest.fixture(autouse=True)
@@ -412,7 +412,6 @@ class TestCheckpointHookIntegration:
         ckpt_dir = str(tmp_path / "ckpts")
         hook = CheckpointHook(
             checkpoint_dir=ckpt_dir,
-            save_every_n_epochs=1,
             save_last=True,
         )
         trainer = _make_trainer(hooks=[hook])
@@ -432,7 +431,6 @@ class TestCheckpointHookIntegration:
         ckpt_dir = str(tmp_path / "ckpts")
         hook = CheckpointHook(
             checkpoint_dir=ckpt_dir,
-            save_every_n_epochs=100,  # disable periodic saves
             save_last=False,
             save_best=True,
             best_metric_name=("eval", "loss"),
@@ -442,16 +440,18 @@ class TestCheckpointHookIntegration:
         trainer = _make_trainer(hooks=[hook])
 
         # Manually set eval/loss to simulate metric tracking
-        # (MetricsHook or eval step normally does this)
+        # (MetricsHook or eval step normally does this). Writes from
+        # on_eval_step_complete so save_best (which also fires there)
+        # sees the updated value.
         class FakeMetricHook:
-            """Writes a decreasing eval/loss each epoch."""
+            """Writes a decreasing eval/loss each eval phase."""
 
             def __init__(self):
-                self._epoch = 0
+                self._n = 0
 
-            def on_epoch_end(self, trainer, state):
-                state["eval"]["loss"] = 1.0 - self._epoch * 0.3
-                self._epoch += 1
+            def on_eval_step_complete(self, trainer, state):
+                state["eval"]["loss"] = 1.0 - self._n * 0.3
+                self._n += 1
 
         trainer.hooks.insert(0, FakeMetricHook())  # run before checkpoint hook
         trainer.train(_MockDataModule(batches_per_epoch=2), max_epochs=3)
@@ -487,35 +487,36 @@ class TestCheckpointHookIntegration:
         log_hook = Log(every_n_steps=1, keys=[("train", "loss")])
         ckpt_hook = CheckpointHook(
             checkpoint_dir=ckpt_dir,
-            save_every_n_epochs=1,
+            save_every_n_steps=2,
             save_last=False,
         )
         trainer = _make_trainer(hooks=[log_hook, ckpt_hook])
         trainer.train(_MockDataModule(batches_per_epoch=2), max_epochs=1)
 
         out = capsys.readouterr().out
-        # Expect a ``─── ckpt: epoch_0.pt @ step=N ─── ... ───`` separator
+        # Expect a ``─── ckpt: step_2.pt @ step=2 ─── ... ───`` separator
         # somewhere in the run output, not just a raw "Saved checkpoint to"
         # line slicing through the table.
-        assert "─── ckpt: epoch_0.pt @ step=" in out
+        assert "─── ckpt: step_2.pt @ step=2" in out
 
-    def test_epoch_end_plus_train_end_dedup_last_pt(self, tmp_path, capsys):
-        """``on_epoch_end`` + ``on_train_end`` landing on the same step
-        must not write ``last.pt`` twice (nor announce twice)."""
+    def test_eval_plus_train_end_dedup_last_pt(self, tmp_path, capsys):
+        """``on_eval_step_complete`` + ``on_train_end`` landing on the same
+        step must not write ``last.pt`` twice (nor announce twice)."""
         from molix.hooks import Log
 
         ckpt_dir = str(tmp_path / "ckpts")
         log_hook = Log(every_n_steps=1, keys=[("train", "loss")])
         ckpt_hook = CheckpointHook(
             checkpoint_dir=ckpt_dir,
-            save_every_n_epochs=10_000,  # disable periodic epoch_*.pt saves
             save_last=True,
         )
         trainer = _make_trainer(hooks=[log_hook, ckpt_hook])
         trainer.train(_MockDataModule(batches_per_epoch=2), max_epochs=1)
 
         out = capsys.readouterr().out
-        # Exactly one inline announcement for last.pt — not two.
+        # Exactly one inline announcement for last.pt — not two. With the
+        # step-based refactor, eval fires at end of epoch and on_train_end
+        # fires immediately after at the same global_step → dedup.
         assert out.count("─── ckpt: last.pt @ step=") == 1, out
 
 

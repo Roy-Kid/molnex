@@ -14,7 +14,6 @@ Covers:
 from __future__ import annotations
 
 import cuequivariance as cue
-import cuequivariance_torch as cuet
 import pytest
 import torch
 
@@ -119,11 +118,8 @@ class TestPolarizabilityHeadAnisotropic:
         rng = torch.Generator().manual_seed(seed)
         atom_features = torch.randn(n_nodes, 4, generator=rng, dtype=torch.float64)
         # Tensor track has irrep dim = mul·(1 + 3 + 5) = 9·mul.
-        irreps = head._tensor_irreps if hasattr(head, "_tensor_irreps") else None  # not used
         irreps_dim = 9 * mul
-        tensor_features = torch.randn(
-            n_edges, irreps_dim, generator=rng, dtype=torch.float64
-        )
+        tensor_features = torch.randn(n_edges, irreps_dim, generator=rng, dtype=torch.float64)
         scalar_edge = torch.randn(n_edges, 4, generator=rng, dtype=torch.float64)
         edge_index = torch.stack(
             [
@@ -180,7 +176,10 @@ class TestPolarizabilityHeadAnisotropic:
         # Total α has positive trace (= 3·α_iso).
         total_trace = out["alpha"].diagonal(dim1=-2, dim2=-1).sum(dim=-1)
         torch.testing.assert_close(
-            total_trace, 3.0 * out["alpha_iso"], atol=1e-12, rtol=1e-12,
+            total_trace,
+            3.0 * out["alpha_iso"],
+            atol=1e-12,
+            rtol=1e-12,
         )
 
     def test_aniso_requires_inputs(self) -> None:

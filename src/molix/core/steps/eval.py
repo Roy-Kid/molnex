@@ -22,55 +22,35 @@ class DefaultEvalStep:
     :func:`torch.amp.autocast` with ``config["amp_dtype"]``. No
     ``GradScaler`` is used during evaluation.
 
-    See Also:
-        - :class:`DefaultTrainStep`
-        - :func:`molix.config.set_precision`
+    Args:
+        no_grad: Wrap forward in ``torch.no_grad()`` (default ``True``).
+            Set ``False`` for models that derive forces via
+            ``torch.autograd.grad`` (e.g. Sonata), which needs an active
+            autograd graph.
     """
 
-    def on_train_batch(
-        self,
-        trainer: "Trainer",
-        state: "TrainState",
-        batch: Any,
-    ) -> dict[str, Any]:
+    def __init__(self, *, no_grad: bool = True) -> None:
+        self._no_grad = no_grad
+
+    def on_train_batch(self, trainer: "Trainer", state: "TrainState", batch: Any) -> dict[str, Any]:
         raise NotImplementedError(
             "DefaultEvalStep.on_train_batch() is not implemented. "
             "Use DefaultTrainStep for training batches."
         )
 
-    def on_eval_batch(
-        self,
-        trainer: "Trainer",
-        state: "TrainState",
-        batch: Any,
-    ) -> dict[str, Any]:
-        """Execute evaluation batch computation.
-
-        The batch is expected to already be on the model's device — the
-        :class:`Trainer` moves it in the outer loop so that all hooks and
-        the step see the same device-aligned object.
-        """
-        from molix.core.steps import extract_model_inputs
-
-        assert trainer.model is not None, "trainer.model must be set"
-        assert trainer.loss_fn is not None, "trainer.loss_fn must be set"
+    def on_eval_batch(self, trainer: "Trainer", state: "TrainState", batch: Any) -> dict[str, Any]:
+        assert trainer.model is not None
+        assert trainer.loss_fn is not None
 
         device_type = next(trainer.model.parameters()).device.type
         amp_enabled = bool(config["use_amp"])
         amp_dtype = config["amp_dtype"]
 
-        ctx = torch.amp.autocast(device_type, dtype=amp_dtype) if amp_enabled else nullcontext()
-        with torch.no_grad(), ctx:
-            if isinstance(batch, dict):
-                model_inputs = extract_model_inputs(batch)
-                predictions = trainer.model(**model_inputs)
-            else:
-                predictions = trainer.model(batch)
+        grad_ctx = torch.no_grad() if self._no_grad else torch.enable_grad()
+        amp_ctx = torch.amp.autocast(device_type, dtype=amp_dtype) if amp_enabled else nullcontext()
+        with grad_ctx, amp_ctx:
+            predictions = trainer.model(batch)
             loss = trainer.loss_fn(predictions, batch)
 
         state["eval"]["loss"] = loss.item()
-
-        return {
-            "loss": loss,
-            "predictions": predictions,
-        }
+        return {"loss": loss, "predictions": predictions}

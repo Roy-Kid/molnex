@@ -29,29 +29,12 @@ class DefaultTrainStep:
         3. Backward pass (with ``trainer.scaler`` if AMP enabled)
         4. ``on_after_backward`` hook point (gradients are unscaled)
         5. Optimizer step
-
-    See Also:
-        - :class:`DefaultEvalStep`
-        - :func:`molix.config.set_precision`
     """
 
-    def on_train_batch(
-        self,
-        trainer: "Trainer",
-        state: "TrainState",
-        batch: Any,
-    ) -> dict[str, Any]:
-        """Execute training batch computation.
-
-        The batch is expected to already be on the model's device — the
-        :class:`Trainer` moves it in the outer loop so that all hooks and
-        the step see the same device-aligned object.
-        """
-        from molix.core.steps import extract_model_inputs
-
-        assert trainer.model is not None, "trainer.model must be set"
-        assert trainer.loss_fn is not None, "trainer.loss_fn must be set"
-        assert trainer.optimizer is not None, "trainer.optimizer must be set"
+    def on_train_batch(self, trainer: "Trainer", state: "TrainState", batch: Any) -> dict[str, Any]:
+        assert trainer.model is not None
+        assert trainer.loss_fn is not None
+        assert trainer.optimizer is not None
 
         device_type = next(trainer.model.parameters()).device.type
         amp_enabled = bool(config["use_amp"])
@@ -59,11 +42,7 @@ class DefaultTrainStep:
 
         ctx = torch.amp.autocast(device_type, dtype=amp_dtype) if amp_enabled else nullcontext()
         with ctx:
-            if isinstance(batch, dict):
-                model_inputs = extract_model_inputs(batch)
-                predictions = trainer.model(**model_inputs)
-            else:
-                predictions = trainer.model(batch)
+            predictions = trainer.model(batch)
             loss = trainer.loss_fn(predictions, batch)
 
         trainer.optimizer.zero_grad()
@@ -74,7 +53,6 @@ class DefaultTrainStep:
         else:
             loss.backward()
 
-        # Hook point: gradients are ready and unscaled
         trainer._call_hooks("on_after_backward", trainer, state)
 
         if scaler is not None:
@@ -84,18 +62,9 @@ class DefaultTrainStep:
             trainer.optimizer.step()
 
         state["train"]["loss"] = loss.item()
+        return {"loss": loss, "predictions": predictions}
 
-        return {
-            "loss": loss,
-            "predictions": predictions,
-        }
-
-    def on_eval_batch(
-        self,
-        trainer: "Trainer",
-        state: "TrainState",
-        batch: Any,
-    ) -> dict[str, Any]:
+    def on_eval_batch(self, trainer: "Trainer", state: "TrainState", batch: Any) -> dict[str, Any]:
         raise NotImplementedError(
             "DefaultTrainStep.on_eval_batch() is not implemented. "
             "Use DefaultEvalStep for evaluation batches."

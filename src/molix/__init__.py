@@ -69,7 +69,8 @@ from molix.core.checkpoint import Checkpoint, CheckpointBackend, TorchSaveBacken
 from molix.core.losses import MAELoss, MSELoss, WeightedLoss
 from molix.core.state import Stage, StepResult, TrainState
 from molix.core.trainer import Trainer
-from molix.hooks import JournalHook, ProfilerHook
+from molix.export import export_model
+from molix.hooks import ProfilerHook
 
 __all__ = [
     "Stage",
@@ -85,7 +86,7 @@ __all__ = [
     "config",
     "logger",
     "logging",
+    "export_model",
     "maybe_compile",
     "ProfilerHook",
-    "JournalHook",
 ]
