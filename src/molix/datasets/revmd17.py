@@ -125,6 +125,11 @@ class RevMD17Source:
 
     @property
     def source_id(self) -> str:
+        """Cache-key identity ``revmd17:<molecule>:size=<bytes>:n=<n>``.
+
+        Appends ``:total=<n>`` when a subset was requested, so subsetted
+        and full sources get distinct caches.
+        """
         size = self.filepath.stat().st_size
         sid = f"revmd17:{self.molecule}:size={size}:n={len(self)}"
         if self.total is not None:
@@ -135,6 +140,13 @@ class RevMD17Source:
         return int(self._R.shape[0])
 
     def __getitem__(self, idx: int) -> Sample:
+        """Return the ``idx``-th trajectory frame as a flat sample dict.
+
+        The atomic numbers ``Z`` are shared across frames (a single
+        molecule). Returns ``Z``, ``pos`` ``(N, 3)`` for this frame, and a
+        ``targets`` sub-dict with ``energy`` ``(1,)`` and ``forces``
+        ``(N, 3)`` (kcal/mol and kcal/(mol·Å) as distributed).
+        """
         return {
             "Z": self._z,
             "pos": self._R[idx],

@@ -16,7 +16,9 @@ from typing import Any, Protocol, runtime_checkable
 class Runnable(Protocol):
     """Sync task protocol, structurally aligned with molexp.Runnable."""
 
-    def execute(self, data: Any) -> Any: ...
+    def execute(self, data: Any) -> Any:
+        """Transform *data* and return the result (structural ``execute`` contract)."""
+        ...
 
 
 class Task:
@@ -28,9 +30,15 @@ class Task:
         return type(self).__name__
 
     def execute(self, data: dict) -> dict:
+        """Transform a sample dict — abstract; subclasses must override.
+
+        Raises:
+            NotImplementedError: Always, on the base class.
+        """
         raise NotImplementedError
 
     def __call__(self, data: dict) -> dict:
+        """Call the task, delegating to :meth:`execute`."""
         return self.execute(data)
 
 
@@ -43,6 +51,11 @@ class SampleTask(Task):
     """
 
     def execute(self, data: dict) -> dict:
+        """Transform one sample dict — abstract; subclasses must override.
+
+        Raises:
+            NotImplementedError: Always, on this base class.
+        """
         raise NotImplementedError
 
 
@@ -97,4 +110,12 @@ class BatchTask(Task):
     """
 
     def execute(self, data: dict) -> dict:
+        """Transform a collated batch — abstract; custom subclasses override.
+
+        Input and output are both nested ``TensorDict`` batches, not raw
+        sample dicts.
+
+        Raises:
+            NotImplementedError: Always, on this base class.
+        """
         raise NotImplementedError

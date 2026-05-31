@@ -97,36 +97,3 @@ class ScalarHead(nn.Module):
             f"ScalarHead(d_model={self.d_model}, "
             f"hidden_dim={self.hidden_dim}, pooling={self.pooling})"
         )
-
-
-# Simple test
-if __name__ == "__main__":
-    print("=" * 60)
-    print("ScalarHead Test")
-    print("=" * 60)
-
-    # Create module
-    head = ScalarHead(d_model=128, hidden_dim=64, pooling="mean")
-    print(f"\nModule: {head}")
-
-    # Create test data (padded per-atom representations)
-    h = torch.randn(3, 7, 128)  # [B=3, L=7, d_model=128]
-    mask = torch.zeros(3, 7, dtype=torch.bool)
-    mask[0, :5] = True  # 5 atoms
-    mask[1, :3] = True  # 3 atoms
-    mask[2, :7] = True  # 7 atoms
-
-    print("\nInput:")
-    print(f"  h shape: {h.shape}")
-    print("  Batch size: 3")
-    print("  Atom counts: [5, 3, 7]")
-
-    # Forward pass
-    with torch.no_grad():
-        scalar = head(h, mask)
-
-    print("\nOutput:")
-    print(f"  scalar shape: {scalar.shape}")
-    print(f"  scalar values: {scalar}")
-
-    print("\n✓ ScalarHead works!")

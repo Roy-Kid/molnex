@@ -67,6 +67,11 @@ class MetricsHook(ScalarHook):
 
     @property
     def scalar_keys(self) -> tuple[Path, ...]:
+        """The ``(prefix, metric_name)`` keys this hook writes for both phases.
+
+        Returns one key per metric under each of ``prefix_train`` and
+        ``prefix_val`` (the train / eval namespace sub-dicts).
+        """
         names = [self._scalar_name(m) for m in self.train_metrics]
         return tuple((prefix, n) for prefix in (self.prefix_train, self.prefix_val) for n in names)
 
@@ -85,10 +90,16 @@ class MetricsHook(ScalarHook):
         return value
 
     def on_epoch_start(self, trainer, state):
+        """Reset the eval-side metric accumulators before a new epoch."""
         for metric in self.val_metrics:
             metric.reset()
 
     def on_train_batch_end(self, trainer, state, batch, outputs):
+        """Compute each train metric on this batch and write it to ``state[prefix_train]``.
+
+        Train metrics are reset every step, so each value is the per-batch
+        metric rather than a running average.
+        """
         preds = self._extract_value(outputs, self.pred_key)
         targets = self._extract_value(batch, self.target_key)
 
@@ -99,12 +110,18 @@ class MetricsHook(ScalarHook):
             train_ns[self._scalar_name(metric)] = metric.compute()
 
     def on_eval_batch_end(self, trainer, state, batch, outputs):
+        """Accumulate this batch into the eval metrics (running over the eval set)."""
         preds = self._extract_value(outputs, self.pred_key)
         targets = self._extract_value(batch, self.target_key)
         for metric in self.val_metrics:
             metric.update(preds, targets)
 
     def on_eval_step_complete(self, trainer, state):
+        """Finalize the accumulated eval metrics into ``state[prefix_val]`` and reset.
+
+        Fired at the end of every eval phase so the values are published
+        before the LR scheduler reads ``best_metric_name``.
+        """
         val_ns = state[self.prefix_val]
         for metric in self.val_metrics:
             val_ns[self._scalar_name(metric)] = metric.compute()

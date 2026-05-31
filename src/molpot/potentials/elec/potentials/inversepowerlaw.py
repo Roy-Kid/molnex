@@ -132,6 +132,20 @@ class InversePowerLawPotential(Potential):
         return self.prefactor * prefac
 
     def pbc_correction(self, periodic, positions, cell, charges):
+        """Periodic-boundary correction for the inverse-power-law potential.
+
+        For the Coulomb case (``exponent == 1``) applies the dedicated
+        prefactor-scaled correction; otherwise defers to the base class.
+
+        Args:
+            periodic: Per-system periodicity flags.
+            positions: Atom positions ``(N, 3)``.
+            cell: Box vectors ``(3, 3)``.
+            charges: Per-atom charges ``(N,)``.
+
+        Returns:
+            The PBC energy correction term.
+        """
         if self.exponent == 1:
             return self.prefactor * _pbc_correction(periodic, positions, cell, charges)
         return super().pbc_correction(periodic, positions, cell, charges)

@@ -352,6 +352,22 @@ class PermMultipoleHead(nn.Module):
     # forward
     # ------------------------------------------------------------------
     def forward(self, batch: TensorDict) -> dict[str, torch.Tensor]:
+        """Read permanent atomic multipoles ``(q, μ, Θ)`` from the batch.
+
+        Reads ``edges.edge_features`` / ``edges.edge_index`` / ``atoms.batch``
+        from the collated batch, runs the enabled charge / dipole / quadrupole
+        readouts, and optionally projects the per-graph total charge.
+
+        Args:
+            batch: Post-collate :class:`~tensordict.TensorDict` with the
+                ``atoms`` / ``edges`` / ``graphs`` namespaces.
+
+        Returns:
+            Dict keyed by the configured output names (e.g.
+            ``out_charge_key`` ``(N,)``, ``out_dipole_key`` ``(N, 3)``,
+            ``out_quadrupole_key``) plus ``molecular_dipole`` and the
+            pre/post total-charge sums when charge projection is active.
+        """
         edge_features = batch["edges", "edge_features"]  # (E, F)
         edge_index = batch["edges", "edge_index"]  # (E, 2)
         atom_batch = batch["atoms", "batch"]  # (N,)

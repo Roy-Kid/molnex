@@ -53,15 +53,23 @@ class GPUMemoryHook(ScalarHook):
 
     @property
     def scalar_keys(self) -> tuple[Path, ...]:
+        """The ``("gpu", <name>)`` state keys this hook writes, one per metric."""
         return tuple(("gpu", self._AVAILABLE[m]) for m in self.metrics)
 
     def on_train_start(self, trainer, state):
+        """Reset CUDA peak-memory stats when the ``peak`` metric is tracked."""
         import torch
 
         if "peak" in self.metrics and torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
 
     def on_train_batch_end(self, trainer, state, batch, outputs):
+        """Record the selected memory metrics (GiB) into ``state["gpu"]``.
+
+        Writes ``0.0`` for every metric when CUDA is unavailable. When
+        ``peak`` is tracked, the peak counter is reset after reading so the
+        value reflects the most recent step only.
+        """
         import torch
 
         gpu = state["gpu"]
@@ -119,9 +127,16 @@ class GPUUtilsHook(ScalarHook):
 
     @property
     def scalar_keys(self) -> tuple[Path, ...]:
+        """The ``("gpu", <name>)`` state keys this hook writes, one per metric."""
         return tuple(("gpu", self._AVAILABLE[m]) for m in self.metrics)
 
     def on_train_start(self, trainer, state):
+        """Initialize NVML and bind the current CUDA device handle.
+
+        Raises:
+            RuntimeError: If CUDA is unavailable.
+            ImportError: If the ``nvidia-ml-py`` package is not installed.
+        """
         import torch
 
         if not torch.cuda.is_available():
@@ -140,6 +155,7 @@ class GPUUtilsHook(ScalarHook):
         self._handle = nvml.nvmlDeviceGetHandleByIndex(idx)
 
     def on_train_batch_end(self, trainer, state, batch, outputs):
+        """Record SM / memory-bandwidth utilization (%) into ``state["gpu"]``."""
         rates = self._nvml.nvmlDeviceGetUtilizationRates(self._handle)
         gpu = state["gpu"]
         for m in self.metrics:
@@ -150,6 +166,7 @@ class GPUUtilsHook(ScalarHook):
                 gpu[key] = float(rates.memory)
 
     def on_train_end(self, trainer, state):
+        """Shut down NVML and release the device handle (best-effort)."""
         nvml = getattr(self, "_nvml", None)
         if nvml is not None:
             try:

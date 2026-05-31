@@ -46,6 +46,7 @@ class GlobalRescale(nn.Module):
         return self.scale * x + self.shift
 
     def extra_repr(self) -> str:
+        """Render the scalar ``scale`` and ``shift`` for ``repr(module)``."""
         return f"scale={self.scale.item():.4g}, shift={self.shift.item():.4g}"
 
 
@@ -112,6 +113,7 @@ class PerSpeciesScaleShift(nn.Module):
         return self.scales[Z] * x + self.shifts[Z]
 
     def extra_repr(self) -> str:
+        """Render the species count and trainability flag for ``repr(module)``."""
         return (
             f"num_species={self.scales.shape[0]}, trainable={isinstance(self.scales, nn.Parameter)}"
         )

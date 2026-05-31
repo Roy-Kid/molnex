@@ -99,12 +99,14 @@ class ThreeBPASource:
 
     @property
     def source_id(self) -> str:
+        """Stable cache key encoding the split tag, file size, and sample count."""
         return f"3bpa:{self.tag}:size={self._size}:n={len(self._samples)}"
 
     def __len__(self) -> int:
         return len(self._samples)
 
     def __getitem__(self, idx: int) -> Sample:
+        """Return the parsed flat-``dict`` sample at ``idx``."""
         return self._samples[idx]
 
 

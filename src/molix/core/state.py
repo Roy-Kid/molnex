@@ -108,6 +108,21 @@ class TrainState(dict):
         super().__setitem__(key, value)
 
     def __getitem__(self, key):
+        """Read a value, walking namespaces for slash / tuple paths.
+
+        A plain top-level key (``"epoch"``) reads directly. A slash-string
+        (``"eval/MAE"``) or tuple (``("eval", "MAE")``) walks the
+        namespace nesting.
+
+        Args:
+            key: Top-level key, slash-string path, or tuple path.
+
+        Returns:
+            The resolved value.
+
+        Raises:
+            KeyError: ``key`` is absent, or any path segment is missing.
+        """
         segments = self._path_segments(key)
         if segments is None:
             return super().__getitem__(key)
@@ -117,6 +132,14 @@ class TrainState(dict):
         return value
 
     def __contains__(self, key) -> bool:
+        """Membership test that understands slash / tuple paths.
+
+        Args:
+            key: Top-level key, slash-string path, or tuple path.
+
+        Returns:
+            ``True`` if the (possibly nested) key resolves, else ``False``.
+        """
         segments = self._path_segments(key)
         if segments is None:
             return super().__contains__(key)
@@ -124,6 +147,15 @@ class TrainState(dict):
         return found
 
     def get(self, key, default=None):
+        """Read a value with a fallback, walking namespaces for paths.
+
+        Args:
+            key: Top-level key, slash-string path, or tuple path.
+            default: Returned when the key / path does not resolve.
+
+        Returns:
+            The resolved value, or *default* on a miss.
+        """
         segments = self._path_segments(key)
         if segments is None:
             return super().get(key, default)
@@ -131,52 +163,73 @@ class TrainState(dict):
         return value if found else default
 
     def increment_step(self) -> None:
+        """Advance the ``global_step`` counter by one (in place)."""
         self["global_step"] = self["global_step"] + 1
 
     def increment_epoch(self) -> None:
+        """Advance the ``epoch`` counter by one (in place)."""
         self["epoch"] = self["epoch"] + 1
 
     def set_stage(self, stage: Stage) -> None:
+        """Set the current training :class:`Stage`.
+
+        Args:
+            stage: New stage (``TRAIN`` / ``EVAL`` / ``TEST`` / ``PREDICT``).
+        """
         self["stage"] = stage
 
     @property
     def epoch(self) -> int:
+        """Current epoch counter (top-level ``epoch`` key)."""
         return self["epoch"]
 
     @epoch.setter
     def epoch(self, value: int) -> None:
+        """Set the ``epoch`` counter."""
         self["epoch"] = value
 
     @property
     def global_step(self) -> int:
+        """Global optimizer-step counter (top-level ``global_step`` key)."""
         return self["global_step"]
 
     @global_step.setter
     def global_step(self, value: int) -> None:
+        """Set the ``global_step`` counter."""
         self["global_step"] = value
 
     @property
     def stage(self) -> Stage:
+        """Current training :class:`Stage` (top-level ``stage`` key)."""
         return self["stage"]
 
     @stage.setter
     def stage(self, value: Stage) -> None:
+        """Set the current :class:`Stage`."""
         self["stage"] = value
 
     @property
     def steps_since_last_eval(self) -> int:
+        """Steps elapsed since the last eval phase (``steps_since_last_eval``)."""
         return self["steps_since_last_eval"]
 
     @steps_since_last_eval.setter
     def steps_since_last_eval(self, value: int) -> None:
+        """Set the ``steps_since_last_eval`` counter."""
         self["steps_since_last_eval"] = value
 
     @property
     def best_metric(self) -> float | None:
+        """Best monitored metric seen so far, or ``None`` if unset.
+
+        Owned by the checkpoint hook; read via :meth:`get` so it returns
+        ``None`` before any value has been recorded.
+        """
         return self.get("best_metric")
 
     @best_metric.setter
     def best_metric(self, value: float | None) -> None:
+        """Set the ``best_metric`` scalar."""
         self["best_metric"] = value
 
 

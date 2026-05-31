@@ -115,6 +115,11 @@ class PackedCache:
         return self._sink
 
     def __fspath__(self) -> str:
+        """Return the backing sink path as a string (``os.PathLike`` protocol).
+
+        Lets a :class:`PackedCache` be passed directly to ``open``,
+        ``torch.load``, and other path-accepting APIs.
+        """
         return os.fspath(self._sink)
 
     def __repr__(self) -> str:

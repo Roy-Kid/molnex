@@ -178,6 +178,11 @@ class WaterLESSource:
         return len(self._frame_indices)
 
     def __getitem__(self, idx: int) -> Sample:
+        """Return the ``idx``-th frame as a flat-``dict`` sample.
+
+        Builds ``Z`` (atomic numbers), positions, cell, and the energy /
+        forces targets from the underlying extxyz frame.
+        """
         frame: ExtxyzFrame = self._all_frames[self._frame_indices[idx]]
         Z = torch.tensor(
             [Element.get_atomic_number(s) for s in frame.species],

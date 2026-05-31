@@ -55,7 +55,9 @@ class BaseDataset(Dataset[Any], ABC):
     def __len__(self) -> int: ...
 
     @abstractmethod
-    def __getitem__(self, idx: int) -> dict: ...  # type: ignore[override]
+    def __getitem__(self, idx: int) -> dict:  # type: ignore[override]
+        """Return the ``idx``-th sample as a flat ``dict`` (raw-sample shape)."""
+        ...
 
     def _compute_split_indices(
         self,
@@ -262,10 +264,22 @@ class SubsetDataset(BaseDataset):
         self._indices = indices
 
     def __getattr__(self, name: str) -> Any:
-        # Forward unknown attrs (e.g. dataset-declared target_schema) to the
-        # wrapped dataset so DataModule auto-discovery works on subsets.
-        # Guard private/dunder names — during unpickling __setstate__ has not
-        # populated __dict__ yet, so accessing self._dataset would recurse.
+        """Forward unknown public attributes to the wrapped dataset.
+
+        Lets subset views transparently expose dataset-declared attributes
+        (e.g. ``target_schema``) so :class:`~molix.data.DataModule`
+        auto-discovery works on splits. Private / dunder names raise
+        :class:`AttributeError` instead of forwarding — during unpickling
+        ``__setstate__`` has not populated ``__dict__`` yet, so reaching
+        for ``self._dataset`` would recurse.
+
+        Args:
+            name: Attribute name being looked up.
+
+        Raises:
+            AttributeError: ``name`` is private/dunder, or absent on the
+                wrapped dataset.
+        """
         if name.startswith("_"):
             raise AttributeError(name)
         return getattr(self._dataset, name)
@@ -274,6 +288,11 @@ class SubsetDataset(BaseDataset):
         return len(self._indices)
 
     def __getitem__(self, idx: int) -> dict:  # type: ignore[override]
+        """Return the sample at the ``idx``-th index of this subset's view.
+
+        Maps the local index through ``self._indices`` and defers to the
+        wrapped dataset.
+        """
         return self._dataset[self._indices[idx]]
 
     @cached_property
@@ -295,6 +314,13 @@ class SubsetDataset(BaseDataset):
 
     @cached_property
     def max_atoms(self) -> int:
+        """Largest single-sample atom count over this subset's indices.
+
+        Computed from the wrapped dataset's packed ``atom_ptr`` pointers
+        restricted to ``self._indices``. Falls back to the wrapped
+        dataset's ``max_atoms`` when no packed payload is reachable, and is
+        ``0`` when there are no per-atom keys or the subset is empty.
+        """
         payload = getattr(self._dataset, "_payload", None)
         if payload is None:
             return getattr(self._dataset, "max_atoms", 0)
@@ -306,6 +332,13 @@ class SubsetDataset(BaseDataset):
 
     @cached_property
     def max_edges(self) -> int:
+        """Largest single-sample edge count over this subset's indices.
+
+        Computed from the wrapped dataset's packed ``edge_ptr`` pointers
+        restricted to ``self._indices``. Falls back to the wrapped
+        dataset's ``max_edges`` when no packed payload is reachable, and is
+        ``0`` when there are no per-edge keys or the subset is empty.
+        """
         payload = getattr(self._dataset, "_payload", None)
         if payload is None:
             return getattr(self._dataset, "max_edges", 0)

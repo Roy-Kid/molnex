@@ -146,6 +146,24 @@ class ChargeResponseHead(nn.Module):
         edge_scalars: torch.Tensor,
         edge_vectors: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
+        """Predict the charge-response parameters consumed by the electrostatics solve.
+
+        Args:
+            pos: Atom positions ``(N, 3)``.
+            Z: Atomic numbers ``(N,)``.
+            atom_batch: Graph membership per atom ``(N,)``.
+            num_graphs: Number of graphs in the batch.
+            edge_index: Source/target atom pairs ``(E, 2)``.
+            bond_diff: Edge displacement vectors ``(E, 3)``.
+            node_scalars: Per-atom scalar features ``(N, F_n)``.
+            edge_scalars: Per-edge scalar features ``(E, F_e)``.
+            edge_vectors: Optional per-edge vector features ``(E, 3)``.
+
+        Returns:
+            Dict of response parameters whose keys depend on ``variant`` —
+            e.g. ``alpha`` (hardness), ``chi`` (electronegativity),
+            ``atom_mask``, ``atom_diag``, and ``edge_response``.
+        """
         atom_diag = self.atom_diag_mlp(node_scalars).squeeze(-1)
         edge_response = self.edge_scalar_mlp(edge_scalars).squeeze(-1)
         if edge_vectors is not None:

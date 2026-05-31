@@ -33,12 +33,35 @@ class DefaultEvalStep:
         self._no_grad = no_grad
 
     def on_train_batch(self, trainer: "Trainer", state: "TrainState", batch: Any) -> dict[str, Any]:
+        """Not supported — :class:`DefaultEvalStep` handles eval batches only.
+
+        Always raises :class:`NotImplementedError`; use
+        :class:`~molix.core.steps.train.DefaultTrainStep` for training
+        batches.
+        """
         raise NotImplementedError(
             "DefaultEvalStep.on_train_batch() is not implemented. "
             "Use DefaultTrainStep for training batches."
         )
 
     def on_eval_batch(self, trainer: "Trainer", state: "TrainState", batch: Any) -> dict[str, Any]:
+        """Run one evaluation batch: forward pass + loss, no parameter update.
+
+        Runs the forward pass under ``torch.no_grad()`` (or
+        ``torch.enable_grad()`` when ``no_grad=False``), optionally inside
+        :func:`torch.amp.autocast` when ``config["use_amp"]`` is set, then
+        evaluates the loss. Writes ``state["eval"]["loss"]`` as a Python
+        float.
+
+        Args:
+            trainer: The owning :class:`~molix.core.trainer.Trainer`
+                (provides ``model`` and ``loss_fn``).
+            state: The :class:`~molix.core.state.TrainState` to record into.
+            batch: A collated batch ``TensorDict`` for the model.
+
+        Returns:
+            ``{"loss": <Tensor>, "predictions": <model output>}``.
+        """
         assert trainer.model is not None
         assert trainer.loss_fn is not None
 

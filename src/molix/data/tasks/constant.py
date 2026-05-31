@@ -44,9 +44,20 @@ class ConstantLabel(SampleTask):
 
     @property
     def task_id(self) -> str:
+        """Cache-key identity ``const_label:<key>=<value>``."""
         return f"const_label:{self.key}={self.value!r}"
 
     def execute(self, data: dict) -> dict:
+        """Write the constant under ``sample["targets"][key]``.
+
+        Args:
+            data: A raw sample dict; its ``targets`` sub-dict is copied
+                (not mutated in place).
+
+        Returns:
+            A new sample dict with ``targets[key]`` set to a ``(1,)``
+            tensor holding the configured value (default dtype).
+        """
         targets = dict(data.get("targets", {}))
         targets[self.key] = torch.tensor([self.value], dtype=torch.get_default_dtype())
         return {**data, "targets": targets}

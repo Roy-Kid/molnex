@@ -251,7 +251,9 @@ class JournalWriter:
         self._closed = True
 
     def __enter__(self) -> "JournalWriter":
+        """Enter the writer context, returning ``self``."""
         return self
 
     def __exit__(self, *exc_info: Any) -> None:
+        """Close the journal on context exit (also flushes on exceptions)."""
         self.close()

@@ -187,6 +187,15 @@ class TanhCutoff(nn.Module):
         self.tanh1: torch.Tensor
 
     def forward(self, r: torch.Tensor) -> torch.Tensor:
+        """Evaluate the tanh cutoff envelope.
+
+        Args:
+            r: Pairwise distances, any shape.
+
+        Returns:
+            Cutoff values in ``[0, 1]`` (same shape as ``r``), zero for
+            ``r >= r_cut``.
+        """
         r = r.to(dtype=self.r_cut.dtype)
         x = r / self.r_cut
         mask = r < self.r_cut
@@ -217,6 +226,15 @@ class HalfCosineCutoff(nn.Module):
         self.r_cut: torch.Tensor
 
     def forward(self, r: torch.Tensor) -> torch.Tensor:
+        """Evaluate the half-cosine-squared cutoff envelope.
+
+        Args:
+            r: Pairwise distances, any shape.
+
+        Returns:
+            Cutoff values in ``[0, 1]`` (same shape as ``r``), zero for
+            ``r >= r_cut``.
+        """
         r = r.to(dtype=self.r_cut.dtype)
         x = r / self.r_cut
         mask = r < self.r_cut

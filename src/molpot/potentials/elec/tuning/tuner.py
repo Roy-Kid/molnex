@@ -34,9 +34,15 @@ class TuningErrorBounds(torch.nn.Module):
         self._positions = positions
 
     def forward(self, *args, **kwargs):
+        """Alias for :meth:`error` so the bound can be called as a module."""
         return self.error(*args, **kwargs)
 
     def error(self, *args, **kwargs):
+        """Return the total estimated error bound; implemented by subclasses.
+
+        Raises:
+            NotImplementedError: This base class defines no error formula.
+        """
         raise NotImplementedError
 
 
@@ -90,6 +96,14 @@ class TunerBase:
         self._smearing_esti_prefac = 2 * float((charges**2).sum()) / math.sqrt(len(positions))
 
     def tune(self, accuracy: float = 1e-3):
+        """Search for calculator parameters meeting ``accuracy``; subclass-defined.
+
+        Args:
+            accuracy: Target error bound the tuned parameters should satisfy.
+
+        Raises:
+            NotImplementedError: This base class defines no tuning strategy.
+        """
         raise NotImplementedError
 
     def estimate_smearing(self, accuracy: float) -> float:

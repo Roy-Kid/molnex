@@ -244,6 +244,14 @@ class PipelineSpec:
     # -- introspection -----------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialise the DAG to a plain, JSON-friendly dict for introspection.
+
+        Returns:
+            A dict with ``name``, ``pipeline_id``, a ``nodes`` list (each
+            with ``name`` / ``type`` / ``task_id`` / sorted ``reads`` /
+            sorted ``writes`` / ``cacheable``) in topological order, and an
+            ``edges`` list (each ``from`` / ``to`` / sorted ``keys``).
+        """
         return {
             "name": self.name,
             "pipeline_id": self.pipeline_id,

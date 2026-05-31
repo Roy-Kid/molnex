@@ -43,6 +43,12 @@ class EarlyStop(BaseHook):
         self._out_dir = Path(out_dir) if out_dir is not None else None
 
     def on_train_batch_end(self, trainer, state, batch, outputs) -> None:
+        """Abort training if a non-finite loss or parameter is detected.
+
+        No-op unless ``if_nan=True``. Checks ``state["train"]["loss"]`` and,
+        when a model was supplied, every parameter; the first non-finite
+        value triggers :meth:`_abort`.
+        """
         if not self._if_nan:
             return
         loss = state["train"].get("loss")

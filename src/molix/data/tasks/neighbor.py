@@ -58,11 +58,35 @@ class NeighborList(SampleTask):
 
     @property
     def task_id(self) -> str:
+        """Cache-key identity ``nlist:cut=..:max=..:pbc=..:sym=..``.
+
+        The ``sym`` field keeps full-bidirectional and half-pair caches
+        separate, since they produce different edge tensors.
+        """
         return (
             f"nlist:cut={self.cutoff}:max={self.max_num_pairs}:pbc={self.pbc}:sym={self.symmetry}"
         )
 
     def execute(self, data: dict) -> dict:
+        """Compute the neighbour list for one sample and attach edge fields.
+
+        Calls the C++ kernel on the sample's ``pos`` (and ``cell`` under
+        PBC), normalises pair indices to ``(E, 2)``, optionally strips
+        NaN-padded rows, and negates the kernel's delta so that
+        ``bond_diff = pos[target] - pos[source]`` per the repo Edge
+        Convention. With ``symmetry=True`` the reverse edge is appended for
+        every pair (``E = 2 * n_pairs``), with the sign-flipped
+        ``bond_diff`` and duplicated distances.
+
+        Args:
+            data: A sample dict with ``pos`` ``(N, 3)`` and, under PBC, a
+                ``cell`` ``(3, 3)``.
+
+        Returns:
+            A new sample dict adding ``edge_index`` ``(E, 2)`` (source in
+            column 0, target in column 1), ``bond_diff`` ``(E, 3)``
+            (``pos[target] - pos[source]``), and ``bond_dist`` ``(E,)``.
+        """
         pos = data["pos"]
         box_vectors = data.get("cell") if self.pbc else None
 

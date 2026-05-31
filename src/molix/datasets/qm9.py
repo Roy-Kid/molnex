@@ -35,8 +35,11 @@ from pathlib import Path
 import torch
 from tqdm import tqdm
 
+from molix import logger as _logger_mod
 from molix.data.collate import TargetSchema
 from molix.data.source import Sample
+
+logger = _logger_mod.getLogger(__name__)
 
 # All scalar properties exposed by raw QM9 records (excluding "tag" and "index").
 _QM9_GRAPH_TARGETS: frozenset[str] = frozenset(
@@ -132,7 +135,7 @@ def _ensure_downloaded(root: Path) -> None:
     tarball = root / "qm9.tar.bz2"
     exclude_file = root / "qm9_exclude.txt"
     if not tarball.exists():
-        print("Downloading QM9 tarball...", flush=True)
+        logger.info("Downloading QM9 tarball...")
         _download(_DEFAULT_URL, tarball)
     if not exclude_file.exists():
         _download(_EXCLUDE_URL, exclude_file)
@@ -331,6 +334,12 @@ class QM9Source:
         return len(self._samples)
 
     def __getitem__(self, idx: int) -> Sample:
+        """Return the ``idx``-th QM9 molecule as a flat sample dict.
+
+        Lazily parses the tarball on first access. Each sample holds ``Z``
+        (atomic numbers), ``pos`` ``(N, 3)`` positions, and a ``targets``
+        sub-dict of the configured scalar properties.
+        """
         self._ensure_samples_loaded()
         assert self._samples is not None
         return self._samples[idx]

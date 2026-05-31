@@ -72,12 +72,28 @@ class UnitConvert(SampleTask):
 
     @property
     def task_id(self) -> str:
+        """Cache-key identity ``unit_convert:<key>:<src>-><dst>,...`` (sorted)."""
         body = ",".join(
             f"{k}:{self._units[k][0]}->{self._units[k][1]}" for k in sorted(self.factors)
         )
         return f"unit_convert:{body}"
 
     def execute(self, data: dict) -> dict:
+        """Rescale each configured target by its precomputed pint factor.
+
+        Multiplies ``targets[key]`` by the conversion factor resolved at
+        construction time (one scalar multiply per field).
+
+        Args:
+            data: A sample dict whose ``targets`` sub-dict holds every
+                configured key.
+
+        Returns:
+            A new sample dict with the converted targets.
+
+        Raises:
+            KeyError: A configured target key is missing from the sample.
+        """
         targets = dict(data.get("targets", {}))
         for key, factor in self.factors.items():
             if key not in targets:

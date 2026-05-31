@@ -224,9 +224,23 @@ class PiNet(TensorDictModuleBase):
 
     @classmethod
     def from_spec(cls, spec: PiNetSpec) -> "PiNet":
+        """Build a :class:`PiNet` from a validated :class:`PiNetSpec` config."""
         return cls(**spec.model_dump())
 
     def forward(self, td: TensorDict) -> TensorDict:
+        """Encode a batch, writing per-layer node features back into ``td``.
+
+        Reads ``atoms.Z`` / ``atoms.pos`` / ``edges.edge_index``, derives edge
+        geometry on the fly (so forces flow through ``pos``), runs the PiNet
+        message-passing stack, and writes per-layer features
+        ``(N, layers, features)`` under ``atoms.node_features``.
+
+        Args:
+            td: Post-collate :class:`~tensordict.TensorDict` batch.
+
+        Returns:
+            The same batch with ``atoms.node_features`` populated.
+        """
         Z = td["atoms", "Z"]
         pos = td["atoms", "pos"]
         edge_index = td["edges", "edge_index"]

@@ -51,10 +51,12 @@ class ProxyLabeler:
 
     @property
     def num_types(self) -> int:
+        """Number of distinct proxy labels this labeler can emit."""
         return self._num_types
 
     @property
     def type_map(self) -> dict[int, str]:
+        """Mapping from proxy-label index to its human-readable name."""
         return self._type_map
 
     def label(self, z: torch.Tensor) -> torch.Tensor:

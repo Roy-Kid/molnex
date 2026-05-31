@@ -24,10 +24,21 @@ from molix.data.pipeline import Node
 class DataModuleProtocol(Protocol):
     """Protocol consumed by the Trainer."""
 
-    def setup(self, stage: str = "fit") -> None: ...
-    def train_dataloader(self) -> Iterable: ...
-    def val_dataloader(self) -> Iterable: ...
-    def on_epoch_start(self, epoch: int) -> None: ...
+    def setup(self, stage: str = "fit") -> None:
+        """Prepare datasets/samplers for *stage* (e.g. ``"fit"``), called once."""
+        ...
+
+    def train_dataloader(self) -> Iterable:
+        """Return an iterable yielding collated training batches."""
+        ...
+
+    def val_dataloader(self) -> Iterable:
+        """Return an iterable yielding collated validation batches."""
+        ...
+
+    def on_epoch_start(self, epoch: int) -> None:
+        """Notify the module that epoch *epoch* is starting (e.g. reseed samplers)."""
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -131,9 +142,26 @@ class DataModule:
     # -- Lifecycle (Trainer calls these) ------------------------------------
 
     def setup(self, stage: str = "fit") -> None:
+        """No-op — datasets are fully built at construction time.
+
+        Args:
+            stage: Lifecycle stage label (accepted for protocol
+                compatibility; unused here).
+        """
         pass  # datasets are ready at construction time
 
     def train_dataloader(self) -> DataLoader:
+        """Build the training :class:`~torch.utils.data.DataLoader`.
+
+        Under DDP, wraps the train dataset in a shuffling
+        :class:`~torch.utils.data.DistributedSampler` (shuffle handled by
+        the sampler, ``drop_last=True``); otherwise shuffles directly. The
+        collate function casts floating-point leaves to the captured
+        ``ftype`` and applies any post-collate batch nodes.
+
+        Returns:
+            A configured training ``DataLoader``.
+        """
         if _is_distributed():
             self._train_sampler = DistributedSampler(
                 self.train_dataset,
@@ -162,6 +190,16 @@ class DataModule:
         )
 
     def val_dataloader(self) -> DataLoader:
+        """Build the validation :class:`~torch.utils.data.DataLoader`.
+
+        Never shuffles. Under DDP, uses a non-shuffling
+        :class:`~torch.utils.data.DistributedSampler` and keeps
+        ``drop_last`` off so every validation sample is seen. Shares the
+        same collate function as :meth:`train_dataloader`.
+
+        Returns:
+            A configured validation ``DataLoader``.
+        """
         if _is_distributed():
             self._val_sampler = DistributedSampler(
                 self.val_dataset,
@@ -201,6 +239,15 @@ class DataModule:
     # -- Epoch hook ---------------------------------------------------------
 
     def on_epoch_start(self, epoch: int) -> None:
+        """Reseed the DDP samplers for *epoch* so shuffling differs each epoch.
+
+        Calls ``set_epoch(epoch)`` on the train/val
+        :class:`~torch.utils.data.DistributedSampler` instances when they
+        exist (i.e. under DDP); a no-op otherwise.
+
+        Args:
+            epoch: The epoch index about to start.
+        """
         if self._train_sampler is not None:
             self._train_sampler.set_epoch(epoch)
         if self._val_sampler is not None:

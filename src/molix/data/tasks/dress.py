@@ -31,12 +31,28 @@ class AtomicDress(DatasetTask):
 
     @property
     def task_id(self) -> str:
+        """Cache-key identity ``dress:<target>-><output>:e=<sorted elements>``."""
         elems = ",".join(str(e) for e in sorted(self.elements))
         return f"dress:{self.target_key}->{self.output_key}:e={elems}"
 
     # -- DatasetTask contract -----------------------------------------------
 
     def fit(self, samples: list[dict]) -> None:
+        """Fit per-element baseline energies by least squares over *samples*.
+
+        Builds a count matrix (one row per sample, one column per element
+        in :attr:`elements`, entries = number of atoms of that element)
+        and solves ``counts @ beta ≈ target`` via
+        :func:`numpy.linalg.lstsq`. The solution ``beta`` is stored as
+        :attr:`atomic_energies` (``{element: energy}``).
+
+        Args:
+            samples: Training sample dicts; each must hold ``Z`` (atomic
+                numbers) and ``targets[target_key]``.
+
+        Raises:
+            KeyError: A sample is missing ``target_key`` in its targets.
+        """
         x_rows: list[list[float]] = []
         y_vals: list[float] = []
 
@@ -56,6 +72,22 @@ class AtomicDress(DatasetTask):
         self.atomic_energies = {elem: float(beta[idx]) for idx, elem in enumerate(self.elements)}
 
     def execute(self, data: dict) -> dict:
+        """Subtract the fitted atomic baseline from one sample's target.
+
+        Sums the per-element baseline over the sample's atoms and writes
+        ``target - baseline`` to ``targets[output_key]`` as a ``(1,)``
+        tensor (matching the input dtype/device).
+
+        Args:
+            data: A sample dict with ``Z`` and ``targets[target_key]``.
+
+        Returns:
+            A new sample dict with the baseline-subtracted target.
+
+        Raises:
+            RuntimeError: Called before :meth:`fit` (no fitted energies).
+            KeyError: ``target_key`` is absent from the sample's targets.
+        """
         if not self.atomic_energies:
             raise RuntimeError("AtomicDress.fit() must be called before execute()")
 
@@ -71,6 +103,13 @@ class AtomicDress(DatasetTask):
         return {**data, "targets": targets}
 
     def state_dict(self) -> dict[str, Any]:
+        """Serialise the fitted baseline for caching.
+
+        Returns:
+            ``{"elements": LongTensor(n_elements),
+            "energies": Float64Tensor(n_elements)}`` with elements sorted
+            ascending and aligned to their fitted energies.
+        """
         elems = sorted(self.atomic_energies.keys())
         return {
             "elements": torch.tensor(elems, dtype=torch.long),
@@ -78,6 +117,12 @@ class AtomicDress(DatasetTask):
         }
 
     def load_state_dict(self, state: dict[str, Any]) -> None:
+        """Restore the fitted baseline produced by :meth:`state_dict`.
+
+        Args:
+            state: Mapping with aligned ``"elements"`` and ``"energies"``
+                tensors; rebuilds :attr:`atomic_energies`.
+        """
         elems = state["elements"].tolist()
         energies = state["energies"].tolist()
         self.atomic_energies = dict(zip(elems, energies))

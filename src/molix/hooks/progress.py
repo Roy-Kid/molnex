@@ -230,6 +230,12 @@ class Log(BaseHook):
             )
 
     def on_train_start(self, trainer, state):
+        """Validate the configured keys and emit the initial table header.
+
+        Raises:
+            ValueError: If any requested key is neither advertised by a
+                registered :class:`ScalarHook` nor a built-in state path.
+        """
         self._validate_keys(trainer)
         self._rows_since_header = 0
         self._last_epoch = int(state.get("epoch", 0))
@@ -257,6 +263,12 @@ class Log(BaseHook):
         self._rows_since_header = self.header_every_n_rows
 
     def on_train_batch_end(self, trainer, state, batch, outputs):
+        """Emit one metrics row for this step, throttled by the row schedule.
+
+        Skips steps before ``start_step`` and any step not on the
+        ``every_n_steps`` cadence; re-emits the header every
+        ``header_every_n_rows`` rows.
+        """
         step = int(state.get("global_step", 0)) + 1
         if step < self.start_step:
             return
