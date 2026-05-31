@@ -28,7 +28,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from molhub.io import extract_member_locked, fetch_locked
 
 from molix.data.collate import TargetSchema
 from molix.data.source import Sample
@@ -81,6 +80,11 @@ class RevMD17Source:
         reuse across molecules; both fetch + extract are concurrent-safe
         so simultaneous slurm jobs serialise instead of clobbering files.
         """
+        # Imported lazily: the molhub download helpers are only needed when
+        # actually materialising the figshare tarball, so merely importing
+        # this module (and thus ``molix.datasets``) stays dependency-light.
+        from molhub.io import extract_member_locked, fetch_locked
+
         tarball = root / _TARBALL_NAME
         fetch_locked(cls.BASE_URL, tarball, referer=_FIGSHARE_ARTICLE)
         extract_member_locked(tarball, f"rmd17/npz_data/{filename}", root / filename)

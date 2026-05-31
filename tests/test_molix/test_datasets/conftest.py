@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 # Six canonical dimer classes (kept in lock-step with
@@ -256,3 +258,222 @@ def charged_dimers_root(tmp_path: Path) -> Path:
 @pytest.fixture
 def dimer_classes() -> tuple[str, ...]:
     return _DIMER_CLASSES
+
+
+# ---------------------------------------------------------------------------
+# MolRec (.zarr) fixtures for MolRecSource tests
+# ---------------------------------------------------------------------------
+#
+# These build real molrs ``MolRec`` archives on disk so the MolRecSource tests
+# exercise the genuine zarr read-back path (including the float32 -> float64
+# upcast that molrs storage performs). The fixtures keep the *original* float32
+# arrays they wrote available to the tests via a small dataclass, so the
+# round-trip losslessness assertions compare against ground truth, not against
+# whatever dtype came back off disk.
+#
+# The 15 QM9 scalar target names are pulled from the production module so the
+# fixture can never drift from the canonical list.
+from molix.datasets.qm9 import _QM9_GRAPH_TARGETS  # noqa: E402
+
+# Sorted so the expected-value arrays line up with a deterministic order the
+# tests can re-derive.
+_QM9_TARGET_NAMES: tuple[str, ...] = tuple(sorted(_QM9_GRAPH_TARGETS))
+
+# Canonical atomic numbers for the heterogeneous QM9 micro-fixture molecules.
+# (kept here so tests can assert Z without importing molpy in the fixture path)
+_CH4 = (["C", "H", "H", "H", "H"], [6, 1, 1, 1, 1])
+_H2O = (["O", "H", "H"], [8, 1, 1])
+_NH3 = (["N", "H", "H", "H"], [7, 1, 1, 1])
+
+
+@dataclass(frozen=True)
+class MolRecQM9Fixture:
+    """Carries the QM9 .zarr path plus the raw float32 arrays the fixture wrote.
+
+    Attributes:
+        path: Directory of the written ``.zarr`` archive.
+        elements: Per-frame list of element symbols (ragged across frames).
+        expected_Z: Per-frame list of expected atomic-number arrays ``(n_i,)``.
+        positions: Per-frame float32 position arrays ``(n_i, 3)``.
+        scalars: Mapping ``target_name -> float32 array (n_frames,)`` as written.
+        teacher_id: The teacher prefix every observable was stored under.
+        n_frames: Number of frames in the trajectory.
+    """
+
+    path: Path
+    elements: list[list[str]]
+    expected_Z: list[list[int]]
+    positions: list[np.ndarray]
+    scalars: dict[str, np.ndarray]
+    teacher_id: str
+    n_frames: int
+
+
+@dataclass(frozen=True)
+class MolRecForceFixture:
+    """Carries the force-bearing .zarr path plus the raw float32 arrays written.
+
+    Attributes:
+        path: Directory of the written ``.zarr`` archive.
+        elements: Element symbols of the single 3-atom system (shared by frames).
+        expected_Z: Expected atomic numbers ``[1, 1, 8]``.
+        positions: Per-frame float32 position arrays ``(3, 3)``.
+        energy_a: ``teacherA.energy`` float32 values ``(n_frames,)``.
+        energy_b: ``teacherB.energy`` float32 values ``(n_frames,)`` (distinct).
+        forces_a: ``teacherA.forces`` float32 array ``(n_frames, 3, 3)``.
+        n_frames: Number of frames in the trajectory.
+    """
+
+    path: Path
+    elements: list[str]
+    expected_Z: list[int]
+    positions: list[np.ndarray]
+    energy_a: np.ndarray
+    energy_b: np.ndarray
+    forces_a: np.ndarray
+    n_frames: int
+
+
+def _make_molrs_frame(elements: list[str], xyz_f32: np.ndarray):
+    """Build a single molrs ``Frame`` from symbols + float32 ``(n, 3)`` xyz.
+
+    The box is a fixed 20 Å cubic cell (float64 ndarray as molrs.Box requires).
+    """
+    import molrs
+
+    frame = molrs.Frame()
+    block = molrs.Block()
+    block.insert("element", np.array(elements, dtype=object))
+    block.insert("x", np.ascontiguousarray(xyz_f32[:, 0], dtype=np.float32))
+    block.insert("y", np.ascontiguousarray(xyz_f32[:, 1], dtype=np.float32))
+    block.insert("z", np.ascontiguousarray(xyz_f32[:, 2], dtype=np.float32))
+    frame["atoms"] = block
+    frame.box = molrs.Box(np.eye(3) * 20.0)
+    return frame
+
+
+@pytest.fixture
+def molrec_qm9_record(tmp_path: Path) -> MolRecQM9Fixture:
+    """Write a 3-molecule heterogeneous QM9 .zarr under one ``teacherA`` prefix.
+
+    Three molecules with *different* atom counts (CH4=5, H2O=3, NH3=4) form the
+    trajectory. All 15 QM9 graph-level scalar targets are present, each stored
+    as a scalar observable of shape ``(3,)`` float32 under the ``"teacherA."``
+    prefix. No forces are written (scalar-only record).
+    """
+    import molrs
+
+    teacher_id = "teacherA"
+    rng = np.random.default_rng(0)
+
+    specs = [_CH4, _H2O, _NH3]
+    elements = [list(sym) for sym, _ in specs]
+    expected_Z = [list(z) for _, z in specs]
+    positions = [rng.random((len(sym), 3)).astype(np.float32) for sym, _ in specs]
+    n_frames = len(specs)
+
+    frames = [_make_molrs_frame(el, pos) for el, pos in zip(elements, positions)]
+    rec = molrs.MolRec()
+    rec.set_trajectory(molrs.Trajectory.from_frames(frames))
+
+    # Distinct deterministic float32 values per target so the round-trip test
+    # can detect any cross-target mixing.
+    scalars: dict[str, np.ndarray] = {}
+    for t_idx, name in enumerate(_QM9_TARGET_NAMES):
+        values = (np.arange(n_frames, dtype=np.float32) + 0.5 * t_idx + 0.125).astype(np.float32)
+        scalars[name] = values
+        rec.observables.add_scalar(
+            f"{teacher_id}.{name}",
+            values,
+            unit="eV",
+            axes=["timestep"],
+            time_dependent=True,
+            domain="trajectory",
+        )
+
+    rec.method = {teacher_id: {"theory_level": "DFT/PBE", "model_id": "toy"}}
+
+    path = tmp_path / "qm9_rec.zarr"
+    rec.write_zarr(str(path))
+
+    return MolRecQM9Fixture(
+        path=path,
+        elements=elements,
+        expected_Z=expected_Z,
+        positions=positions,
+        scalars=scalars,
+        teacher_id=teacher_id,
+        n_frames=n_frames,
+    )
+
+
+@pytest.fixture
+def molrec_force_record(tmp_path: Path) -> MolRecForceFixture:
+    """Write a 4-frame force-bearing .zarr with two teachers (A and B).
+
+    A single 3-atom system ``["H", "H", "O"]`` is propagated over 4 frames with
+    distinct float32 positions. ``teacherA`` carries an ``energy`` scalar
+    ``(4,)`` plus a ``forces`` vector ``(4, 3, 3)``; ``teacherB`` carries only an
+    ``energy`` scalar ``(4,)`` with *different* values, so teacher-isolation can
+    be verified. The ``method`` dict names both teachers.
+    """
+    import molrs
+
+    elements = ["H", "H", "O"]
+    expected_Z = [1, 1, 8]
+    n_atoms = 3
+    n_frames = 4
+    rng = np.random.default_rng(1)
+
+    positions = [rng.random((n_atoms, 3)).astype(np.float32) for _ in range(n_frames)]
+    energy_a = (np.arange(n_frames, dtype=np.float32) * 1.5 - 10.0).astype(np.float32)
+    energy_b = (np.arange(n_frames, dtype=np.float32) * -2.25 + 3.5).astype(np.float32)
+    forces_a = rng.random((n_frames, n_atoms, 3)).astype(np.float32)
+
+    frames = [_make_molrs_frame(elements, pos) for pos in positions]
+    rec = molrs.MolRec()
+    rec.set_trajectory(molrs.Trajectory.from_frames(frames))
+
+    rec.observables.add_scalar(
+        "teacherA.energy",
+        energy_a,
+        unit="eV",
+        axes=["timestep"],
+        time_dependent=True,
+        domain="trajectory",
+    )
+    rec.observables.add_vector(
+        "teacherA.forces",
+        forces_a,
+        unit="eV/Angstrom",
+        axes=["timestep", "atom", "component"],
+        time_dependent=True,
+        domain="trajectory",
+    )
+    rec.observables.add_scalar(
+        "teacherB.energy",
+        energy_b,
+        unit="eV",
+        axes=["timestep"],
+        time_dependent=True,
+        domain="trajectory",
+    )
+
+    rec.method = {
+        "teacherA": {"theory_level": "DFT/PBE", "model_id": "toyA"},
+        "teacherB": {"theory_level": "DFT/B3LYP", "model_id": "toyB"},
+    }
+
+    path = tmp_path / "force_rec.zarr"
+    rec.write_zarr(str(path))
+
+    return MolRecForceFixture(
+        path=path,
+        elements=elements,
+        expected_Z=expected_Z,
+        positions=positions,
+        energy_a=energy_a,
+        energy_b=energy_b,
+        forces_a=forces_a,
+        n_frames=n_frames,
+    )
