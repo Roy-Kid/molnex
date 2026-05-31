@@ -70,7 +70,7 @@ from molix.core.losses import MAELoss, MSELoss, WeightedLoss
 from molix.core.state import Stage, StepResult, TrainState
 from molix.core.trainer import Trainer
 from molix.export import export_model
-from molix.hooks import ProfilerHook
+from molix.hooks import JournalHook, ProfilerHook
 
 __all__ = [
     "Stage",
@@ -89,4 +89,5 @@ __all__ = [
     "export_model",
     "maybe_compile",
     "ProfilerHook",
+    "JournalHook",
 ]
