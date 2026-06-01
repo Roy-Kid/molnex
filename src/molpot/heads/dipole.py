@@ -51,7 +51,10 @@ class DipoleHead(nn.Module):
 
     * ``"ac"``       — atomic-charge dipole ``Σ_i q_i r_i``.
     * ``"ad"``       — atomic dipole ``Σ_i μ_i`` from vector node features.
-    * ``"bc"``       — bond-charge dipole ``Σ_{ij} q_{ij} r_{ij}``.
+    * ``"bc"``       — bond-charge *dipole only* ``Σ_{ij} q_{ij} r_{ij}``;
+      does **not** expose per-atom ``q_i`` and is **not** antisymmetric.
+      Use :class:`molpot.heads.BondChargeHead` for charge-conserving
+      per-atom ``q_i`` consumable by long-range electrostatics.
     * ``"ad_os"``    — atomic dipole + oxidation-state charge term.
     * Combinations: ``"ac_ad"``, ``"ac_bc"``, ``"ad_bc"``.
 
@@ -142,6 +145,32 @@ class DipoleHead(nn.Module):
         oxidation: torch.Tensor | None = None,
         total_charge: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
+        """Assemble the molecular dipole from the configured ``mode`` terms.
+
+        Each enabled term (atomic-charge ``ac``, atomic-dipole ``ad``,
+        bond-charge ``bc``, oxidation-state ``ad_os``) contributes to the
+        per-graph dipole; the required inputs depend on which terms are active.
+
+        Args:
+            pos: Atom positions ``(N, 3)``.
+            atom_batch: Graph membership per atom ``(N,)``.
+            num_graphs: Number of graphs in the batch.
+            node_scalars: Per-atom scalar features ``(N, F_n)`` (charge terms).
+            node_vectors: Per-atom vector features ``(N, 3)`` (atomic-dipole term).
+            edge_scalars: Per-edge scalar features ``(E, F_e)`` (bond-charge term).
+            edge_vectors: Per-edge vector features ``(E, 3)``.
+            edge_index: Source/target atom pairs ``(E, 2)`` (bond terms).
+            bond_diff: Edge displacement vectors ``(E, 3)`` (bond terms).
+            oxidation: Per-atom oxidation states ``(N,)`` (``ad_os`` term).
+            total_charge: Optional per-graph net charge ``(num_graphs,)`` for
+                the charge-neutrality projection.
+
+        Returns:
+            Dict containing at least ``dipole`` and ``molecular_dipole``
+            ``(num_graphs, 3)`` plus the intermediate per-term tensors
+            (e.g. ``atomic_charges``, ``atomic_dipoles``, ``bond_charges``)
+            produced by the enabled terms.
+        """
         dipole = torch.zeros(num_graphs, 3, dtype=pos.dtype, device=pos.device)
         out: dict[str, torch.Tensor] = {}
 

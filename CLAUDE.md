@@ -25,14 +25,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**MolNex** (v2.0.0) is a dict-first molecular ML framework for unified modeling of molecular potentials and properties with physics-aware ML. It is composed of four packages:
+**MolNex** (v0.1.0) is a dict-first molecular ML framework for unified modeling of molecular potentials and properties with physics-aware ML. It is composed of four packages:
 
 | Package | Role | Key Patterns |
 |---------|------|-------------|
 | **molix** | Training infrastructure | Trainer, TrainState (dict), Step protocol, Hook lifecycle |
 | **molrep** | Representation learning | Embedding → Interaction → Readout pipeline, equivariance via cuEquivariance |
 | **molpot** | Potential functions | BasePotential (nn.Module + ABC), autograd forces, PotentialComposer |
-| **molzoo** | Pre-built encoders | Encoder-only (MACE, Allegro), no readout — downstream uses molpot |
+| **molzoo** | Pre-built encoders | Encoder-only (MACE, Allegro, PiNet, Sonata), no readout — downstream uses molpot |
 
 ## Build & Development
 
@@ -53,7 +53,7 @@ python -m pytest tests/test_molzoo/test_mace.py::test_mace_forward -v
 python -m pytest tests/ --cov=src --cov-report=term-missing
 ```
 
-Python >=3.10 required. Requires `torch>=2.6` (always use latest stable PyTorch).
+Python >=3.10 required. Requires `torch>=2.10` (always use latest stable PyTorch).
 
 ## Architecture
 
@@ -141,7 +141,7 @@ molpot.composition (PotentialComposer)  molpot.potentials
 molix.core (Trainer, TrainState, Step, Hook)
     ↓
 molix.data (Dataset, collate, preprocess)
-molix.datasets (QM9, MD17)
+molix.datasets (QM9, RevMD17, ThreeBPA, WaterLES)
 ```
 
 ### State namespace contract
@@ -240,7 +240,7 @@ hooks (`MetricsHook`, `TensorBoardHook`) should write their
 
 ### Key Design Patterns
 
-- **Encoder-only molzoo**: Encoders return raw features `(N, layers, features)`, readout/potentials handled by molpot
+- **Encoder-only molzoo**: Encoders take a batch `TensorDict` and write per-layer features `(N, layers, features)` under `atoms.node_features`; readout/potentials handled by molpot
 - **Pydantic configs**: All block configs use `BaseModel` with `ConfigDict(arbitrary_types_allowed=True)`
 - **cuEquivariance**: Tensor products use `cuequivariance` / `cuequivariance_torch` for GPU-accelerated equivariant operations
 - **Autograd forces**: `BasePotential.calc_forces()` computes `F = -dE/dx` via `torch.autograd.grad`
@@ -265,7 +265,7 @@ are documented in the table above, not enforced by Python types.
 
 ### Adding New Components
 
-**New encoder** (molzoo): Accept `(Z, bond_dist, bond_diff, edge_index)`, return `(N, layers, features)`. Use `molrep` building blocks. Add paper reference.
+**New encoder** (molzoo): Implement `forward(td: TensorDict) -> TensorDict`, reading `td["atoms", "Z"]` / `td["edges", ...]` and writing per-layer features `(N, layers, features)` back under `atoms.node_features`. Use `molrep` building blocks. Add paper reference.
 
 **New potential** (molpot): Inherit `BasePotential`, implement `forward() -> scalar energy Tensor`. Forces come from autograd automatically.
 
@@ -281,7 +281,7 @@ Every implementation of a physical model, potential, or operator MUST:
 
 ## PyTorch Version Policy
 
-This project tracks **latest stable PyTorch** (currently >=2.6). Use modern PyTorch APIs:
+This project tracks **latest stable PyTorch** (currently >=2.10). Use modern PyTorch APIs:
 - `torch.compile` for performance-critical paths
 - `torch.export` for model serialization
 - `torch.nn.functional` over deprecated module alternatives

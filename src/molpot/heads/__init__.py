@@ -3,6 +3,7 @@
 All heads are plain PyTorch modules.
 """
 
+from molpot.heads.charge_bond import BondChargeHead
 from molpot.heads.charge_response import ChargeResponseHead
 from molpot.heads.dipole import DipoleHead
 from molpot.heads.edge import EdgeEnergyHead
@@ -26,6 +27,7 @@ from molpot.heads.type import TypeHead
 
 __all__ = [
     "AtomicEnergyMLP",
+    "BondChargeHead",
     "ChargeResponseHead",
     "DipoleHead",
     "EdgeEnergyHead",
