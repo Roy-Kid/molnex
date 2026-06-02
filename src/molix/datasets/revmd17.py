@@ -83,7 +83,7 @@ class RevMD17Source:
         # Imported lazily: the molhub download helpers are only needed when
         # actually materialising the figshare tarball, so merely importing
         # this module (and thus ``molix.datasets``) stays dependency-light.
-        from molhub.io import extract_member_locked, fetch_locked
+        from molhub.io import extract_member_locked, fetch_locked  # ty: ignore[unresolved-import]
 
         tarball = root / _TARBALL_NAME
         fetch_locked(cls.BASE_URL, tarball, referer=_FIGSHARE_ARTICLE)
