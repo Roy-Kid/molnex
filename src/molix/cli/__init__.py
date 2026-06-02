@@ -67,7 +67,9 @@ def check(
             }
             for r in results
         ]
-        _console.print_json(json.dumps(payload))
+        # Plain stdout, no rich styling: ``--json`` must stay machine-readable
+        # (``_console.print_json`` injects ANSI colour codes that break parsers).
+        typer.echo(json.dumps(payload, indent=2))
     else:
         _render_table(results)
 
